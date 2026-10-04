@@ -169,6 +169,34 @@
   /** Custom labels that repeat a built-in filter chip stay out of the filter row. */
   const BUILT_IN_FILTER_NAMES = new Set(["all", "favorites", "favourites", "unread", "groups"]);
 
+  /** Custom label chips collapse behind a toggle; the last status persists per device. */
+  const TAGS_KEY = "postal.sidebar.tags";
+  function loadTagsCollapsed(): boolean {
+    try {
+      const raw = JSON.parse(localStorage.getItem(TAGS_KEY) ?? "null");
+      if (typeof raw === "boolean") return raw;
+      if (raw && typeof raw === "object" && typeof raw.collapsed === "boolean") return raw.collapsed;
+    } catch {
+      // Unreadable storage (or SSR) falls back to collapsed.
+    }
+    return true;
+  }
+  let tagsCollapsed = $state(loadTagsCollapsed());
+  function toggleTags() {
+    tagsCollapsed = !tagsCollapsed;
+    try {
+      localStorage.setItem(TAGS_KEY, JSON.stringify(tagsCollapsed));
+    } catch {
+      // Storage can be full or blocked; the state lasts this session then.
+    }
+  }
+
+  const customLabels = $derived(
+    labels.account === activeAccount
+      ? labels.view.labels.filter((label) => !BUILT_IN_FILTER_NAMES.has(label.name.trim().toLowerCase()))
+      : [],
+  );
+
   function isMuted(chat: ChatSummary) {
     return chat.muted_until < 0 || chat.muted_until * 1000 > Date.now();
   }
@@ -500,15 +528,31 @@
         onclick={() => onfilter("unread")}>{t("chat.unread")}</Button>
       <Button variant="chip" selected={chatFilter === "groups"} onclick={() => onfilter("groups")}
         >{t("nav.groups")}</Button>
-      {#if labels.account === activeAccount}
-        {#each labels.view.labels.filter((label) => !BUILT_IN_FILTER_NAMES.has(label.name.trim().toLowerCase())) as label (label.id)}
-          <Button
-            variant="chip"
-            selected={labelFilter === label.id}
-            onclick={() => (labelFilter = labelFilter === label.id ? "" : label.id)}>
-            {label.name}
-          </Button>
-        {/each}
+      {#if customLabels.length > 0}
+        <button
+          type="button"
+          class="tags-toggle"
+          aria-expanded={!tagsCollapsed}
+          aria-controls="sidebar-tags"
+          aria-label={t(tagsCollapsed ? "labels.show_tags" : "labels.hide_tags")}
+          title={t(tagsCollapsed ? "labels.show_tags" : "labels.hide_tags")}
+          onclick={toggleTags}>
+          <Icon name={tagsCollapsed ? (locale.dir === "rtl" ? "chevronLeft" : "chevronRight") : "chevronDown"} size={14} />
+          <span>{t("labels.title")}</span>
+          {#if tagsCollapsed}<span class="tags-count">{formatNumber(customLabels.length)}</span>{/if}
+        </button>
+        {#if !tagsCollapsed}
+          <span id="sidebar-tags" role="group" aria-label={t("labels.title")}>
+            {#each customLabels as label (label.id)}
+              <Button
+                variant="chip"
+                selected={labelFilter === label.id}
+                onclick={() => (labelFilter = labelFilter === label.id ? "" : label.id)}>
+                {label.name}
+              </Button>
+            {/each}
+          </span>
+        {/if}
       {/if}
     </div>
     {#if archivedChats > 0 || chatFilter === "archived"}
@@ -1122,6 +1166,35 @@
   /* Label pills wrap to more lines, so every label stays visible. */
   .filters.labels-row {
     flex-wrap: wrap;
+  }
+  /* Disclosure toggle for the custom label chips; matches the chip look. */
+  .tags-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 0;
+    border-radius: 999px;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.875rem;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  .tags-toggle:hover {
+    background: var(--raised);
+    color: var(--text);
+  }
+  .tags-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .tags-count {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  #sidebar-tags {
+    display: contents;
   }
   .archived-entry {
     flex: none;
