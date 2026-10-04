@@ -17,8 +17,43 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   } = $props();
 
   let dialog = $state<HTMLDialogElement>();
-  let collapsed = $state<string[]>([]);
-  let navCollapsed = $state(false);
+  /** Collapse state persists per device, so a restart keeps the last status. */
+  const UI_KEY = "postal.spaces.ui";
+
+  function loadUi(): { navCollapsed: boolean; collapsed: string[] } {
+    try {
+      const raw = JSON.parse(localStorage.getItem(UI_KEY) ?? "null");
+      return {
+        navCollapsed: typeof raw?.navCollapsed === "boolean" ? raw.navCollapsed : true,
+        collapsed: Array.isArray(raw?.collapsed) ? raw.collapsed.filter((id: unknown) => typeof id === "string") : [],
+      };
+    } catch {
+      // Unreadable storage (or SSR) falls back to collapsed by default.
+      return { navCollapsed: true, collapsed: [] };
+    }
+  }
+
+  function saveUi() {
+    try {
+      localStorage.setItem(UI_KEY, JSON.stringify({ navCollapsed, collapsed }));
+    } catch {
+      // Storage can be full or blocked; the state lasts this session then.
+    }
+  }
+
+  const initialUi = loadUi();
+  let collapsed = $state<string[]>(initialUi.collapsed);
+  let navCollapsed = $state(initialUi.navCollapsed);
+
+  function toggleNav() {
+    navCollapsed = !navCollapsed;
+    saveUi();
+  }
+
+  function toggleBranch(id: string) {
+    collapsed = collapsed.includes(id) ? collapsed.filter((other) => other !== id) : [...collapsed, id];
+    saveUi();
+  }
   let draft = $state<{ id: string; parent_id: string | null; name: string; icon: string; color: string; useColor: boolean } | null>(null);
   let moving = $state<{ space: Space; parent_id: string | null } | null>(null);
   let confirmation = $state<Space | null>(null);
@@ -40,8 +75,9 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   $effect(() => {
     account; generation;
     revision++;
-    collapsed = [];
-    navCollapsed = false;
+    const ui = loadUi();
+    collapsed = ui.collapsed;
+    navCollapsed = ui.navCollapsed;
     iconPopup = null;
     emojiQuery = "";
     draft = moving = confirmation = null;
@@ -128,9 +164,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
         <div class="space-row">
           {#if nested.length}
             <button class="toggle" aria-label={t(collapsed.includes(space.id) ? "spaces.expand_name" : "spaces.collapse_name", { name: space.name })}
-              aria-expanded={!collapsed.includes(space.id)} onclick={() => {
-                collapsed = collapsed.includes(space.id) ? collapsed.filter((id) => id !== space.id) : [...collapsed, space.id];
-              }}>{collapsed.includes(space.id) ? "›" : "⌄"}</button>
+              aria-expanded={!collapsed.includes(space.id)} onclick={() => toggleBranch(space.id)}>{collapsed.includes(space.id) ? "›" : "⌄"}</button>
           {:else}<span class="toggle"></span>{/if}
           <button class="name" style:color={space.color ?? undefined} disabled={disabled}
             aria-pressed={selected.kind === "space" && selected.space_id === space.id}
@@ -160,7 +194,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   <header>
     <span class="title-row">
       <button class="toggle" aria-label={t(navCollapsed ? "spaces.expand_name" : "spaces.collapse_name", { name: t("spaces.title") })} aria-expanded={!navCollapsed}
-        onclick={() => (navCollapsed = !navCollapsed)}>{navCollapsed ? "›" : "⌄"}</button>
+        onclick={toggleNav}>{navCollapsed ? "›" : "⌄"}</button>
       <h2>{t("spaces.title")}</h2>
     </span>
     <Button variant="icon" icon="plus" aria-label={t("spaces.create")} disabled={disabled} onclick={() => create()} /></header>

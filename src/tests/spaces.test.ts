@@ -198,11 +198,22 @@ test("real SSR renders nested navigation, ten picker kinds and authoritative una
   try {
     const { render } = await server.ssrLoadModule("svelte/server");
     const load = async (name: string) => (await server.ssrLoadModule(fileURLToPath(new URL(`../lib/spaces/${name}.svelte`, import.meta.url)))).default;
+    // A saved expanded state renders the full tree, as a returning user sees it.
+    (globalThis as Record<string, unknown>).localStorage = {
+      getItem: () => JSON.stringify({ navCollapsed: false, collapsed: [] }),
+      setItem: () => {},
+    };
     const tree = render(await load("SpacesTree"), { props: { account: "a", generation: 1,
       snapshot: { spaces: [root, { ...root, id: "child", parent_id: "root", name: "Child" }], items }, selected: { kind: "unsorted" },
       onselect: () => {}, onaction: async () => { throw new Error("SSR must not mutate"); } } }).body;
     assert.ok(tree.includes('aria-label="Spaces"') && tree.includes('aria-expanded="true"') && tree.includes("Child"));
     assert.ok(/<button[^>]*aria-selected="true"[^>]*>[\s\S]*?Unsorted/.test(tree) && !tree.includes("Export metadata") && !tree.includes("Import metadata"));
+    delete (globalThis as Record<string, unknown>).localStorage;
+    // With no saved state the nav renders collapsed by default.
+    const collapsedTree = render(await load("SpacesTree"), { props: { account: "a", generation: 1,
+      snapshot: { spaces: [root, { ...root, id: "child", parent_id: "root", name: "Child" }], items }, selected: { kind: "unsorted" },
+      onselect: () => {}, onaction: async () => { throw new Error("SSR must not mutate"); } } }).body;
+    assert.ok(collapsedTree.includes('aria-label="Spaces"') && collapsedTree.includes('aria-expanded="false"') && !collapsedTree.includes("Child"));
     const body = render(await load("SpaceItems"), { props: { account: "a", generation: 1, space: root, items, catalog: [],
       resolution: { chats: ["actual@lid"], items: items.map((item) => ({ item_id: item.id, chats: [], unavailable: item.id === "item-7" ? "Missing local message" : null })) },
       onopen: () => { throw new Error("SSR must not open"); }, onaction: async () => { throw new Error("SSR must not mutate"); }, onadd: () => {} } }).body;

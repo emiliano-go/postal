@@ -3001,5 +3001,7 @@
   "content.seek": "Seek",
   "page.conversation": "Conversation",
   "content.crop_area": "Crop area",
-  "content.use_full_image": "Full image"
+  "content.use_full_image": "Full image",
+  "labels.show_tags": "إظهار التصنيفات",
+  "labels.hide_tags": "إخفاء التصنيفات"
 }
