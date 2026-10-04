@@ -16,6 +16,7 @@ whatsapp-rust = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+fs4 = "1.1"
 # Renders the pairing QR to the terminal. Kept in-crate so the spike has no
 # system dependency like `qrencode`.
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

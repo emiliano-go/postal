@@ -44,7 +44,12 @@ impl Pending {
 }
 
 impl Uploads {
-    fn begin(&self, root: &Path, owner: String, name: String, size: u64) -> CommandResult<String> {
+    fn begin(&self, root: &Path, owner: String, name: String, size: u64, media_dir: Option<&Path>) -> CommandResult<String> {
+        self.begin_with_space(root, owner, name, size, media_dir, postal_core::disk_space::available)
+    }
+
+    fn begin_with_space(&self, root: &Path, owner: String, name: String, size: u64,
+        media_dir: Option<&Path>, available: impl Fn(&Path) -> std::io::Result<u64>) -> CommandResult<String> {
         if name.is_empty() || name.len() > 1024 { return Err(CommandError::code("error.upload_name_invalid")); }
         let mut pending = self.0.lock().unwrap();
         pending.expire();
@@ -65,6 +70,14 @@ impl Uploads {
                 }
             }
             pending.cleaned = true;
+        }
+        let staged = pending.entries.values().fold(size.saturating_add(postal_core::disk_space::encrypted_len(size)), |needed, file|
+            needed.saturating_add(file.size - file.written).saturating_add(postal_core::disk_space::encrypted_len(file.size)));
+        let retained = pending.entries.values().fold(size, |needed, file| needed.saturating_add(file.size));
+        let space_error = |error| CommandError::code("error.upload_space_check_failed").with_diagnostic(error);
+        postal_core::disk_space::check(available(&root).map_err(space_error)?, staged).map_err(CommandError::from)?;
+        if let Some(media_dir) = media_dir {
+            postal_core::disk_space::check(available(media_dir).map_err(space_error)?, retained).map_err(CommandError::from)?;
         }
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
         let token = format!("stage-{}-{nonce}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
@@ -164,9 +177,10 @@ fn upload_owner(state: &AppState, account: Option<String>) -> CommandResult<(Str
 pub(crate) async fn begin_upload(app: AppHandle, state: State<'_, AppState>, name: String, size: u64, account_id: Option<String>) -> CommandResult<String> {
     let (owner, service) = upload_owner(&state, account_id)?;
     let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("uploads");
+    let media_dir = service.media_dir();
     let uploads = state.uploads.clone();
     let captured = owner.clone();
-    let token = tauri::async_runtime::spawn_blocking(move || uploads.begin(&root, captured, name, size)).await.map_err(|e| e.to_string())??;
+    let token = tauri::async_runtime::spawn_blocking(move || uploads.begin(&root, captured, name, size, media_dir.as_deref())).await.map_err(|e| e.to_string())??;
     state.uploads.complete_begin(&owner, token, upload_current(&state, &owner, &service))
 }
 
@@ -201,11 +215,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn low_space_rejects_before_staging_and_counts_pending_uploads() {
+        let root = std::env::temp_dir().join(format!("postal-space-{}-{}", std::process::id(), crate::account_store::now_millis()));
+        let media = root.join("media");
+        let uploads = Uploads::default();
+        let first = uploads.begin_with_space(&root, "one".into(), "first.bin".into(), 1, Some(&media), |_| Ok(0)).unwrap_err();
+        assert_eq!(first.message.code, "error.upload_disk_space");
+        let second = uploads.begin_with_space(&root, "one".into(), "first.bin".into(), 1, Some(&media), |path| {
+            Ok(if path == media.as_path() { 0 } else { u64::MAX })
+        }).unwrap_err();
+        assert_eq!(second.message.code, "error.upload_disk_space");
+        assert!(uploads.0.lock().unwrap().entries.is_empty());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+
+        let budget = 32 * 1024 * 1024 + 1 + postal_core::disk_space::encrypted_len(1);
+        let token = uploads.begin_with_space(&root, "one".into(), "first.bin".into(), 1, None, |_| Ok(budget)).unwrap();
+        let blocked = uploads.begin_with_space(&root, "one".into(), "second.bin".into(), 1, None, |_| Ok(budget)).unwrap_err();
+        assert_eq!(blocked.message.code, "error.upload_disk_space");
+        uploads.cancel(&token);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn attachment_names_never_become_local_paths() {
         let root = std::env::temp_dir().join(format!("postal-staging café 📨-{}-{}", std::process::id(), crate::account_store::now_millis()));
         let uploads = Uploads::default();
         for name in ["../outside.png", "..\\outside.png", "C:\\temp\\photo.png", "\\\\server\\share\\photo.png", "CON", "photo:stream", "写真 e\u{301}.png"] {
-            let token = uploads.begin(&root, "one".into(), name.into(), 3).unwrap();
+            let token = uploads.begin(&root, "one".into(), name.into(), 3, None).unwrap();
             uploads.append("one", &token, 0, b"abc").unwrap();
             let file = uploads.take("one", &token).unwrap();
             assert_eq!(file.name, name);
@@ -225,7 +261,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("postal-staging-{}-{}", std::process::id(), crate::account_store::now_millis()));
         let uploads = Uploads::default();
         let bytes = vec![23; CHUNK_BYTES + 17];
-        let token = uploads.begin(&root, "one".into(), "synthetic.mp4".into(), bytes.len() as u64).unwrap();
+        let token = uploads.begin(&root, "one".into(), "synthetic.mp4".into(), bytes.len() as u64, None).unwrap();
         assert_eq!(uploads.take("one", &token).err().unwrap().message.code, "error.upload_incomplete");
         assert_eq!(uploads.append("two", &token, 0, &bytes[..10]).unwrap_err().message.code, "error.upload_account_mismatch");
         assert_eq!(uploads.append("one", &token, 1, &bytes[..10]).unwrap_err().message.code, "error.upload_chunk_order");
@@ -243,15 +279,15 @@ mod tests {
         let path = file.path.clone();
         drop(file);
         assert!(!path.exists());
-        let token = uploads.begin(&root, "one".into(), "cancel.bin".into(), 4).unwrap();
+        let token = uploads.begin(&root, "one".into(), "cancel.bin".into(), 4, None).unwrap();
         uploads.append("one", &token, 0, &[1, 2]).unwrap();
         uploads.cancel(&token);
         uploads.cancel(&token);
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
-        for _ in 0..8 { uploads.begin(&root, "one".into(), "pending.bin".into(), 1).unwrap(); }
-        assert!(uploads.begin(&root, "one".into(), "overflow.bin".into(), 1).is_err());
+        for _ in 0..8 { uploads.begin(&root, "one".into(), "pending.bin".into(), 1, None).unwrap(); }
+        assert!(uploads.begin(&root, "one".into(), "overflow.bin".into(), 1, None).is_err());
         for file in uploads.0.lock().unwrap().entries.values_mut() { file.touched -= std::time::Duration::from_secs(3601); }
-        let empty = uploads.begin(&root, "one".into(), "empty.bin".into(), 0).unwrap();
+        let empty = uploads.begin(&root, "one".into(), "empty.bin".into(), 0, None).unwrap();
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
         drop(uploads.take("one", &empty).unwrap());
         drop(uploads);

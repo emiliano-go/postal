@@ -5,9 +5,9 @@ fn album_staging_validates_all_tokens_before_consuming_any() {
     let root = std::env::temp_dir().join(format!(".postal-album-upload-{}-{}",
         std::process::id(), crate::account_store::now_millis()));
     let uploads = Uploads::default();
-    let first = uploads.begin(&root, "synthetic-one".into(), "first.jpg".into(), 3).unwrap();
-    let second = uploads.begin(&root, "synthetic-one".into(), "second.mp4".into(), 3).unwrap();
-    let foreign = uploads.begin(&root, "synthetic-two".into(), "foreign.jpg".into(), 3).unwrap();
+    let first = uploads.begin(&root, "synthetic-one".into(), "first.jpg".into(), 3, None).unwrap();
+    let second = uploads.begin(&root, "synthetic-one".into(), "second.mp4".into(), 3, None).unwrap();
+    let foreign = uploads.begin(&root, "synthetic-two".into(), "foreign.jpg".into(), 3, None).unwrap();
     uploads.append("synthetic-one", &first, 0, b"abc").unwrap();
     uploads.append("synthetic-one", &second, 0, b"de").unwrap();
     uploads.append("synthetic-two", &foreign, 0, b"xyz").unwrap();
@@ -44,9 +44,9 @@ fn stale_begin_cleanup_removes_only_its_owned_token() {
     let root = std::env::temp_dir().join(format!(".postal-album-stale-begin-{}-{}",
         std::process::id(), crate::account_store::now_millis()));
     let uploads = Uploads::default();
-    let old = uploads.begin(&root, "captured".into(), "old.jpg".into(), 0).unwrap();
-    let foreign = uploads.begin(&root, "changed".into(), "foreign.jpg".into(), 0).unwrap();
-    let fresh = uploads.begin(&root, "captured".into(), "fresh.jpg".into(), 0).unwrap();
+    let old = uploads.begin(&root, "captured".into(), "old.jpg".into(), 0, None).unwrap();
+    let foreign = uploads.begin(&root, "changed".into(), "foreign.jpg".into(), 0, None).unwrap();
+    let fresh = uploads.begin(&root, "captured".into(), "fresh.jpg".into(), 0, None).unwrap();
     assert!(uploads.complete_begin("captured", fresh.clone(), Err(crate::command_error::CommandError::code("error.account_changed"))).is_err());
     let pending = uploads.0.lock().unwrap();
     assert!(!pending.entries.contains_key(&fresh));

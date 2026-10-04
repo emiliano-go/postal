@@ -206,6 +206,7 @@ impl WhatsAppService {
                     .with_param("max_bytes", serde_json::Number::from(limit)));
             let media = media_quality::prepare(MediaInput::File(item.path), item.name, kind, item.quality, false).await?;
             current()?;
+            self.check_sent_copy_space(&media.input)?;
             let extension = file_extension(&media.file_name);
             let (media_type, kind) = media_kind_for(&extension);
             let upload = self.upload_media(&media.input, media_type, item.progress).await?;

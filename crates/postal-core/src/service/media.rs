@@ -1,6 +1,7 @@
 //! Sending attachments, tracking uploads and managing the local media library.
 
 use super::*;
+use anyhow::Context as _;
 use crate::message_ref::MessageRef;
 use whatsapp_rust::media::{self, AudioOptions, DocumentOptions, ImageOptions, VideoOptions};
 
@@ -165,6 +166,7 @@ impl WhatsAppService {
         let (_, original_kind) = media_kind_for(&original_extension);
         let prepared = super::media_quality::prepare(input, file_name.to_string(), original_kind, quality, gif).await?;
         let input = &prepared.input;
+        if !view_once { self.check_sent_copy_space(input)?; }
         self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
         let chat_jid = to.to_string();
@@ -204,6 +206,17 @@ impl WhatsAppService {
         let stored = self.store.insert_message_row(&stored).await?;
         let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(warning)
+    }
+
+    pub(super) fn check_sent_copy_space(&self, input: &MediaInput) -> Result<()> {
+        let Some(dir) = self.media_dir() else { return Ok(()) };
+        let size = match input {
+            MediaInput::Bytes(bytes) => bytes.len() as u64,
+            MediaInput::File(path) => std::fs::metadata(path)?.len(),
+        };
+        let space = crate::disk_space::available(&dir)
+            .context(MessageRef::new("error.upload_space_check_failed"))?;
+        crate::disk_space::check(space, size)
     }
 
     /// Uploads staged bytes or a file, reporting progress when a token was given.
@@ -415,6 +428,7 @@ impl WhatsAppService {
         let animated = prepared.animated;
         let png_thumbnail = prepared.thumbnail;
         let input = MediaInput::File(prepared.file.path.clone());
+        self.check_sent_copy_space(&input)?;
         let upload = self.upload_media(&input, MediaType::Sticker, None).await?;
         let message = wa::Message {
             sticker_message: buffa::MessageField::some(wa::message::StickerMessage {

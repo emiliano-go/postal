@@ -6,6 +6,7 @@
 
 pub mod aliases;
 pub mod database_crypto;
+pub mod disk_space;
 #[cfg(test)]
 mod database_store_tests;
 pub mod history;

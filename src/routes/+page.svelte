@@ -99,7 +99,8 @@
   import ExpressionPicker from "$lib/composer/ExpressionPicker.svelte";
   import ChatPicker from "$lib/chat/ChatPicker.svelte";
   import ReactionList from "$lib/messages/ReactionList.svelte";
-  import { keybinds, matches } from "$lib/utils/keybinds.svelte";
+  import { ACTIONS, keybinds, matches, label as keyLabel, type Action } from "$lib/utils/keybinds.svelte";
+  import { helpShortcut, helpDismissed, dismissHelp } from "$lib/utils/help";
   import CreateDialog from "$lib/chat/CreateDialog.svelte";
   import { plain } from "$lib/utils/format";
   import { customization, lensMap } from "$lib/utils/theme.svelte";
@@ -130,6 +131,28 @@
 
   // Accessibility: first-launch prompt state and the polite live region.
   let a11yPromptOpen = $state(false);
+  let helpOpen = $state(false);
+  let helpSeen = $state(helpDismissed());
+  let helpDialog = $state<HTMLDialogElement>();
+  $effect(() => {
+    if (session.connected && session.activeAccount && !helpSeen && !a11yPromptOpen && !ui.showSettings) helpOpen = true;
+  });
+  $effect(() => {
+    if (!helpDialog) return;
+    if (helpOpen && !helpDialog.open) helpDialog.showModal();
+    else if (!helpOpen && helpDialog.open) helpDialog.close();
+  });
+
+  function closeHelp() {
+    helpSeen = true;
+    dismissHelp();
+    helpOpen = false;
+  }
+
+  function helpBindingLabel(action: Action) {
+    const names: Record<string, string> = { Space: "space", Enter: "enter", Tab: "tab", Backspace: "backspace", Del: "delete", Esc: "escape" };
+    return keyLabel(keybinds[action]).split("+").map((key) => names[key] ? t(`settings.main.key_${names[key]}`) : key).join("+");
+  }
   let liveMessage = $state("");
   let liveAssertive = $state("");
   let liveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1246,6 +1269,14 @@
     // Typing anywhere lands in the composer, so a chat can be answered without
     // clicking the field first.
     const onAnyKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || helpOpen) return;
+      const helpTarget = event.target as HTMLElement | null;
+      if (helpShortcut(event, accessibility.charShortcutsEnabled,
+        !!helpTarget?.closest?.("input, textarea, select, [contenteditable], [role=dialog], dialog"))) {
+        event.preventDefault();
+        helpOpen = true;
+        return;
+      }
       if (!event.altKey && !event.shiftKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         if (session.activeAccount && session.started) { if (!quickSwitcher) switcherQuery = ""; quickSwitcher = !quickSwitcher; }
@@ -1382,6 +1413,32 @@
 {#if a11yPromptOpen}
   <AccessibilityPrompt ondone={() => void afterA11yPrompt()} />
 {/if}
+<dialog class="shortcut-help" bind:this={helpDialog} aria-labelledby="shortcut-help-title"
+  oncancel={(event) => { event.preventDefault(); closeHelp(); }}
+  onkeydown={(event) => event.stopPropagation()}
+  onclick={(event) => { if (event.target === event.currentTarget) closeHelp(); }}>
+  <div class="help-content">
+    <header>
+      <h2 id="shortcut-help-title">{t("help.title")}</h2>
+      <Button variant="icon" icon="x" aria-label={t("ui.close")} title={t("ui.close")} onclick={closeHelp} />
+    </header>
+    <p>{t("help.description")}</p>
+    <h3>{t("help.shortcuts")}</h3>
+    <dl>
+      <dt>{t("nav.quick_switcher")}</dt><dd><kbd dir="ltr">Ctrl / Cmd + K</kbd></dd>
+      {#each ACTIONS as action (action.id)}
+        <dt>{t(`settings.main.keybind.${action.id}.label`)}<small>{t(`settings.main.keybind.${action.id}.description`)}</small></dt>
+        <dd><kbd dir="ltr">{helpBindingLabel(action.id)}</kbd></dd>
+      {/each}
+    </dl>
+    <h3>{t("help.gestures")}</h3>
+    <ul>
+      <li>{t("help.slash")}</li><li>{t("help.emoji")}</li><li>{t("help.quick_replies")}</li>
+      <li>{t("help.soundboard")}</li><li>{t("help.messages")}</li>
+    </ul>
+    <p>{t(accessibility.charShortcutsEnabled ? "help.reopen" : "help.reopen_button")}</p>
+  </div>
+</dialog>
 <ScheduledOutbox
   enqueue={<T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(task)}
   displayName={(chat) => members.displayName(chats.chats.find((item) => item.chat === chat)?.display_name ?? null, chat)} />
@@ -1541,7 +1598,7 @@
       chatPreview={session.settings.chat_preview ?? true}
       chatPreviewDelayMs={session.settings.chat_preview_delay_ms ?? 600}
       onresize={startResize}
-      onresizekey={nudgeListWidth}>
+      onresizekey={nudgeListWidth} onhelp={() => (helpOpen = true)}>
       {#snippet spacesContent()}
         <SpacesTree account={session.activeAccount} generation={messages.accountGeneration} snapshot={spaces.snapshot} selected={spaces.selected}
           loading={spaces.loading} busy={spaces.busy} error={spaces.error} onselect={(selection: SpaceSelection) => void spaces.select(selection)}
@@ -2603,6 +2660,21 @@
 {/if}
 
 <style>
+  .shortcut-help { width: min(760px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  .shortcut-help::backdrop { background: var(--scrim); }
+  .help-content { padding: 24px; }
+  .help-content header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .help-content h2 { margin: 0; font-size: 1.125rem; }
+  .help-content h3 { margin-block: 24px 12px; font-size: 0.9375rem; }
+  .help-content p, .help-content li, .help-content small { color: var(--muted); font-size: 0.8125rem; line-height: 1.5; }
+  .help-content dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 20px; }
+  .help-content dt { font-size: 0.875rem; }
+  .help-content dd { margin: 0; align-self: start; }
+  .help-content small { display: block; margin-top: 3px; }
+  .help-content kbd { display: inline-block; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--raised); font-size: 0.8125rem; white-space: nowrap; }
+  .help-content ul { padding-inline-start: 20px; }
+  .help-content li + li { margin-top: 8px; }
+  @media (max-width: 480px) { .help-content { padding: 16px; } .help-content dl { grid-template-columns: 1fr; gap: 6px; } .help-content dd { margin-bottom: 10px; } }
   :global(:root) {
     --bg: #111b21;
     --chat-bg: #0b141a;

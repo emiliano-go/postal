@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context as _;
 use std::{fs::File, io::{Seek, SeekFrom}};
 use whatsapp_rust::wacore::upload::{encrypt_media_streaming, EncryptedMediaInfo, UploadSource};
 
@@ -50,7 +51,13 @@ impl Drop for TemporaryFile {
 }
 
 pub(super) fn encrypt_file(path: &Path, media_type: MediaType) -> Result<(FileSource, EncryptedMediaInfo)> {
+    encrypt_file_with_space(path, media_type, crate::disk_space::available)
+}
+
+fn encrypt_file_with_space(path: &Path, media_type: MediaType, available: impl Fn(&Path) -> std::io::Result<u64>) -> Result<(FileSource, EncryptedMediaInfo)> {
     let mut input = File::open(path)?;
+    let space = available(path).context(crate::message_ref::MessageRef::new("error.upload_space_check_failed"))?;
+    crate::disk_space::check(space, crate::disk_space::encrypted_len(input.metadata()?.len()))?;
     let destination = path.with_extension("encrypted");
     let (file, mut output) = TemporaryFile::create(destination)?;
     let mut source = FileSource { file, length: 0 };
@@ -63,6 +70,19 @@ pub(super) fn encrypt_file(path: &Path, media_type: MediaType) -> Result<(FileSo
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn low_space_fails_before_encrypted_file_is_created() {
+        let root = std::env::temp_dir().join(format!("postal-low-space-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("synthetic.part");
+        std::fs::write(&path, [1u8; 16]).unwrap();
+        let error = encrypt_file_with_space(&path, MediaType::Video, |_| Ok(0)).err().unwrap();
+        assert_eq!(error.downcast_ref::<crate::message_ref::MessageRef>().unwrap().code, "error.upload_disk_space");
+        assert!(!path.with_extension("encrypted").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

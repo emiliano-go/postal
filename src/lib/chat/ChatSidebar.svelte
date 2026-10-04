@@ -66,6 +66,7 @@
     onswitchaccount,
     onaddaccount,
     onsettings,
+    onhelp,
     onpings,
     onstarred,
     onsearch,
@@ -128,6 +129,7 @@
     onswitchaccount: (id: string) => void;
     onaddaccount: () => void;
     onsettings: (section: Section) => void;
+    onhelp?: () => void;
     onpings: () => void;
     onstarred: () => void;
     onsearch: () => void;
@@ -742,6 +744,10 @@
         <span class="me-status">{t(STATUS_TEXT[visibility] ?? "settings.status_unknown")}</span>
       </span>
     </button>
+    {#if onhelp}
+      <Button variant="icon" icon="keyboard" iconSize={19} title={t("help.title")}
+        aria-label={t("help.title")} onclick={onhelp} />
+    {/if}
     <Button
       variant="icon"
       icon="settings"
