@@ -1100,7 +1100,7 @@
     font: inherit;
   }
   .search input:focus-visible {
-    box-shadow: none;
+    box-shadow: none !important;
   }
   .search input::placeholder {
     color: var(--muted);
