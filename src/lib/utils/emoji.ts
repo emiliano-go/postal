@@ -5,7 +5,21 @@ export type Emoji = {
   shortcodes: string[];
   tags: string[];
   group: number;
+  skins?: { emoji: string }[];
 };
+
+export type SkinTone = "default" | "l1" | "l2" | "l3" | "l4" | "l5";
+export const SKIN_TONES: readonly SkinTone[] = ["default", "l1", "l2", "l3", "l4", "l5"];
+
+const SKIN_TONE_MODIFIERS: Record<Exclude<SkinTone, "default">, string> = {
+  l1: "\u{1F3FB}",
+  l2: "\u{1F3FC}",
+  l3: "\u{1F3FD}",
+  l4: "\u{1F3FE}",
+  l5: "\u{1F3FF}",
+};
+const SKIN_TONE_KEY = "postal.emojiSkinTone.";
+export const SKIN_TONE_CHANGE_EVENT = "postal:emoji-skin-tone-changed";
 
 export type EmojiToken = { query: string; raw: string; start: number; end: number; closed: boolean };
 
@@ -37,17 +51,45 @@ export const GROUPS: { id: number; label: string; icon: string }[] = [
   { id: 9, label: "Flags", icon: "🏁" },
 ];
 
-type Row = { hexcode: string; label: string; unicode: string; group?: number; tags?: string[] };
+type Row = {
+  hexcode: string;
+  label: string;
+  unicode: string;
+  group?: number;
+  tags?: string[];
+  skins?: { unicode: string }[];
+};
 type Codes = Record<string, string | string[]>;
 
 let loading: Promise<Emoji[]> | null = null;
+const jsonImportOptions = typeof window === "undefined" && !("env" in import.meta)
+  ? { with: { type: "json" as const } }
+  : undefined;
+const ownersByEmoji = new WeakMap<Emoji[], Map<string, Emoji>>();
+
+function emojiIdentity(emoji: string) {
+  return emoji.replace(/\uFE0F/g, "");
+}
+
+function owners(all: Emoji[]) {
+  let byEmoji = ownersByEmoji.get(all);
+  if (!byEmoji) {
+    byEmoji = new Map();
+    for (const entry of all) {
+      byEmoji.set(emojiIdentity(entry.emoji), entry);
+      for (const skin of entry.skins ?? []) byEmoji.set(emojiIdentity(skin.emoji), entry);
+    }
+    ownersByEmoji.set(all, byEmoji);
+  }
+  return byEmoji;
+}
 
 /** The emoji table, loaded on first use so it stays out of the startup bundle. */
 export function loadEmojis(): Promise<Emoji[]> {
   loading ??= Promise.all([
-    import("emojibase-data/en/compact.json"),
-    import("emojibase-data/en/shortcodes/github.json"),
-    import("emojibase-data/en/shortcodes/emojibase.json"),
+    import("emojibase-data/en/compact.json", jsonImportOptions),
+    import("emojibase-data/en/shortcodes/github.json", jsonImportOptions),
+    import("emojibase-data/en/shortcodes/emojibase.json", jsonImportOptions),
   ]).then(([data, github, emojibase]) => {
     const list = (x: string | string[] | undefined) => (x === undefined ? [] : [x].flat());
     return (data.default as Row[])
@@ -63,9 +105,47 @@ export function loadEmojis(): Promise<Emoji[]> {
         ],
         tags: row.tags ?? [],
         group: row.group!,
+        skins: row.skins?.map(({ unicode }) => ({ emoji: unicode })),
       }));
   });
   return loading;
+}
+
+/** Selects an existing Emojibase variant, including complete ZWJ sequences. */
+export function applySkinTone(emoji: string, all: Emoji[], tone: SkinTone): string {
+  const key = emojiIdentity(emoji);
+  const entry = owners(all).get(key);
+  if (!entry) return emoji;
+  if (tone === "default") return emojiIdentity(entry.emoji) === key ? emoji : entry.emoji;
+  const modifier = SKIN_TONE_MODIFIERS[tone];
+  return entry.skins?.find((skin) => {
+    const modifiers = skin.emoji.match(/[\u{1F3FB}-\u{1F3FF}]/gu) ?? [];
+    return modifiers.length > 0 && modifiers.every((found) => found === modifier);
+  })?.emoji ?? entry.emoji;
+}
+
+export function skinToneStorageKey(account: string | null): string {
+  return SKIN_TONE_KEY + JSON.stringify(account ?? "");
+}
+
+export function readSkinTone(account: string | null, storage?: Pick<Storage, "getItem">): SkinTone {
+  try {
+    const saved = (storage ?? (typeof localStorage === "undefined" ? undefined : localStorage))
+      ?.getItem(skinToneStorageKey(account));
+    return saved && SKIN_TONES.includes(saved as SkinTone) ? saved as SkinTone : "default";
+  } catch {
+    return "default";
+  }
+}
+
+export function writeSkinTone(account: string | null, tone: SkinTone, storage?: Pick<Storage, "setItem">) {
+  try {
+    (storage ?? (typeof localStorage === "undefined" ? undefined : localStorage))
+      ?.setItem(skinToneStorageKey(account), tone);
+  } catch {}
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SKIN_TONE_CHANGE_EVENT, { detail: { account, tone } }));
+  }
 }
 
 /** Best matches for a `:query`: shortcode prefix, then shortcode word, then label and tags. */

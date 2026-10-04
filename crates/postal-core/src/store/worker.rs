@@ -32,7 +32,14 @@ impl<T: Send + Sync + 'static> Worker<T> {
         tokio::task::spawn_blocking(move || {
             let _guard = guard;
             let _operation_guard = operation_guard;
-            operation(&inner)
+            let result = operation(&inner);
+            if let Err(error) = &result {
+                if error.chain().any(|cause| matches!(cause.downcast_ref::<rusqlite::Error>(),
+                    Some(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DatabaseBusy)) {
+                    log::warn!(target: "postal_core::storage", "database busy after timeout: {error:#}");
+                }
+            }
+            result
         }).await.context("database worker failed")?
     }
 }

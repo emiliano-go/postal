@@ -18,9 +18,11 @@
   let action = $state("");
   let previewCalls = $state("");
   const noop = () => {};
+  const today = new Date();
   const props: ComponentProps<typeof ChatSidebar> = {
     searchQuery: "", searchResults: [], visibleChats: [quiet, ...Array.from({ length: 10 }, (_, n) => ({
       ...quiet, chat: `preview-${n}@s.whatsapp.net`, display_name: `Preview contact ${n}`, pinned: false,
+      last_message_at: new Date(today.getFullYear(), today.getMonth(), today.getDate() - n, 12).getTime() / 1000,
     }))], selectedChat: null,
     chatFilter: "all", onfilter: noop, unreadChats: 0, unreadPings: 0, avatars: {},
     chatLabelOf: (chat) => chat.display_name ?? chat.chat, formatTime: () => "Nov 14",

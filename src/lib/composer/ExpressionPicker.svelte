@@ -23,11 +23,17 @@
   import type { Sticker, StickerLibrary, StickerPack, StickerResyncReport } from "$lib/utils/wire";
   import {
     GROUPS,
+    SKIN_TONES,
+    SKIN_TONE_CHANGE_EVENT,
+    applySkinTone,
     loadEmojis,
     recentEmojis,
+    readSkinTone,
     rememberEmoji,
     searchEmojis,
+    writeSkinTone,
     type Emoji,
+    type SkinTone,
   } from "$lib/utils/emoji";
 
   let {
@@ -62,6 +68,7 @@
 
   let query = $state("");
   let emojis = $state<Emoji[]>([]);
+  let skinTone = $state<SkinTone>("default");
   let recents = $state<string[]>(recentEmojis());
   let library = $state<Record<"gif" | "sticker", string[]>>({ gif: [], sticker: [] });
   let grid: HTMLDivElement | undefined = $state();
@@ -86,7 +93,21 @@
   );
 
   onMount(() => {
-    loadEmojis().then((list) => (emojis = list));
+    let active = true;
+    loadEmojis().then((list) => { if (active) emojis = list; });
+    const onToneChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ account: string | null; tone: SkinTone }>).detail;
+      if (detail?.account === session.activeAccount) skinTone = detail.tone;
+    };
+    window.addEventListener(SKIN_TONE_CHANGE_EVENT, onToneChange);
+    return () => {
+      active = false;
+      window.removeEventListener(SKIN_TONE_CHANGE_EVENT, onToneChange);
+    };
+  });
+
+  $effect(() => {
+    skinTone = readSkinTone(session.activeAccount);
   });
 
   const SIZE_KEY = "postal.pickerSize";
@@ -175,6 +196,28 @@
   });
 
   const results = $derived(query.trim() ? searchEmojis(emojis, query, 120) : []);
+
+  const skinToneKeys: Record<SkinTone, string> = {
+    default: "content.emoji_skin_tone_default",
+    l1: "content.emoji_skin_tone_l1",
+    l2: "content.emoji_skin_tone_l2",
+    l3: "content.emoji_skin_tone_l3",
+    l4: "content.emoji_skin_tone_l4",
+    l5: "content.emoji_skin_tone_l5",
+  };
+
+  function toneLabel(tone: SkinTone) {
+    return t(skinToneKeys[tone]);
+  }
+
+  function chooseSkinTone(tone: SkinTone) {
+    skinTone = tone;
+    writeSkinTone(session.activeAccount, tone);
+  }
+
+  function tonedEmoji(emoji: string, tone = skinTone) {
+    return applySkinTone(emoji, emojis, tone);
+  }
 
   function pickEmoji(emoji: string) {
     rememberEmoji(emoji);
@@ -491,6 +534,17 @@
   {/if}
 
   {#if emojiOnly || tab === "emoji"}
+    <div class="tone-selector" role="group" aria-label={t("content.emoji_skin_tone")}>
+      {#each SKIN_TONES as tone (tone)}
+        <button
+          class:active={skinTone === tone}
+          type="button"
+          aria-label={toneLabel(tone)}
+          aria-pressed={skinTone === tone}
+          title={toneLabel(tone)}
+          onclick={() => chooseSkinTone(tone)}>{tonedEmoji("👋", tone)}</button>
+      {/each}
+    </div>
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
@@ -508,7 +562,7 @@
         {#if query.trim()}
           <div class="grid">
             {#each results as e (e.emoji)}
-              <button title=":{e.shortcodes[0] ?? e.label}:" onclick={() => pickEmoji(e.emoji)}>{e.emoji}</button>
+              <button title=":{e.shortcodes[0] ?? e.label}:" onclick={() => pickEmoji(tonedEmoji(e.emoji))}>{tonedEmoji(e.emoji)}</button>
             {/each}
           </div>
           {#if results.length === 0}<p class="empty">{t("content.no_emoji_matches", { query })}</p>{/if}
@@ -517,7 +571,7 @@
             <h4>{t("content.frequently_used")}</h4>
             <div class="grid">
               {#each recents as emoji (emoji)}
-                <button onclick={() => pickEmoji(emoji)}>{emoji}</button>
+                <button onclick={() => pickEmoji(tonedEmoji(emoji))}>{tonedEmoji(emoji)}</button>
               {/each}
             </div>
           {/if}
@@ -525,7 +579,7 @@
             <h4 data-group={group.id}>{group.label}</h4>
             <div class="grid">
               {#each emojis.filter((e) => e.group === group.id) as e (e.emoji)}
-                <button title=":{e.shortcodes[0] ?? e.label}:" onclick={() => pickEmoji(e.emoji)}>{e.emoji}</button>
+                <button title=":{e.shortcodes[0] ?? e.label}:" onclick={() => pickEmoji(tonedEmoji(e.emoji))}>{tonedEmoji(e.emoji)}</button>
               {/each}
             </div>
           {/each}
@@ -772,6 +826,25 @@
   .tabs button.active {
     background: var(--raised);
     color: var(--text);
+  }
+  .tone-selector {
+    display: flex;
+    gap: 4px;
+    padding: 8px 10px 0;
+  }
+  .tone-selector button {
+    min-width: 2.125rem;
+    min-height: 2rem;
+    padding: 0.125rem;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 1.1rem;
+    cursor: pointer;
+  }
+  .tone-selector button:hover,
+  .tone-selector button.active {
+    background: var(--raised);
   }
   .search {
     display: flex;

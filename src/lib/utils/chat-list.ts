@@ -1,5 +1,38 @@
 import type { ChatSummary } from "./models";
 
+export type ChatListGroup = "pinned" | "today" | "yesterday" | "week" | "older";
+export type ChatListRow = { chat: ChatSummary; group: ChatListGroup };
+
+function calendarDay(date: Date): number {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000;
+}
+
+export function chatListRows(
+  chats: ChatSummary[],
+  now = new Date(),
+  frozen: ChatListRow[] = [],
+  groupByDate = true,
+): ChatListRow[] {
+  const today = calendarDay(now);
+  const groups: ChatListGroup[] = ["pinned", "today", "yesterday", "week", "older"];
+  const rows = chats.map((chat): ChatListRow => {
+    const age = today - calendarDay(new Date(chat.last_message_at * 1000));
+    const group = chat.pinned ? "pinned" : age <= 0 ? "today"
+      : age === 1 ? "yesterday" : age <= 7 ? "week" : "older";
+    return { chat, group };
+  });
+  if (groupByDate) rows.sort((a, b) => groups.indexOf(a.group) - groups.indexOf(b.group));
+  if (frozen.length === 0) return rows;
+  const freshRows = new Map(rows.map((row) => [row.chat.chat, row]));
+  const held: ChatListRow[] = [];
+  for (const row of frozen) {
+    const fresh = freshRows.get(row.chat.chat);
+    if (fresh && fresh.chat.pinned !== (row.group === "pinned")) return rows;
+    if (fresh) held.push({ chat: fresh.chat, group: row.group });
+  }
+  return held;
+}
+
 /** Whether every field the list draws reads the same. */
 function sameSummary(a: ChatSummary, b: ChatSummary) {
   return (

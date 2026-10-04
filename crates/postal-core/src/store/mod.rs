@@ -9,6 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use crate::message_ref::MessageFailure;
 
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 mod chats;
 mod schema;
 mod marks;
@@ -65,6 +67,8 @@ pub(crate) use worker::{StoreWorker, AliasWorker};
 pub use limits::RetentionLimit;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod busy_tests;
 #[cfg(test)]
 mod history_floor_tests;
 #[cfg(test)]
@@ -612,6 +616,7 @@ impl MessageStore {
         }
         let conn = crate::database_crypto::open_database(path, key, rusqlite::OpenFlags::default())
             .with_context(|| format!("opening message store at {}", path.display()))?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
 
         // WAL keeps reads from blocking the writer, which matters because
         // messages arrive while the UI is querying.
@@ -619,7 +624,6 @@ impl MessageStore {
         // With WAL, NORMAL skips the fsync per commit and still survives an app
         // crash; a power loss can drop the last commits but not corrupt the file.
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // Pruned pages go back to the filesystem a step at a time (`reclaim`)
         // instead of through a full VACUUM. Switching an existing file over
         // takes one VACUUM, done here before anything else touches the store.

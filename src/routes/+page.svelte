@@ -27,6 +27,14 @@
   import BroadcastInfo from "$lib/chat/BroadcastInfo.svelte";
   import Panel from "$lib/ui/Panel.svelte";
   import { isBroadcastList, broadcastSendError, broadcastSendReason } from "$lib/utils/broadcast";
+  import {
+    applySkinTone,
+    loadEmojis,
+    readSkinTone,
+    SKIN_TONE_CHANGE_EVENT,
+    type Emoji,
+    type SkinTone,
+  } from "$lib/utils/emoji";
   import type { BroadcastList } from "$lib/utils/wire";
   import NewContact from "$lib/contacts/NewContact.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
@@ -1090,6 +1098,31 @@
   }
 
   const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+  let emojiRows = $state<Emoji[]>([]);
+  let reactionTone = $state<SkinTone>("default");
+  const quickReactions = $derived(
+    emojiRows.length ? QUICK_REACTIONS.map((emoji) => applySkinTone(emoji, emojiRows, reactionTone)) : QUICK_REACTIONS,
+  );
+
+  $effect(() => {
+    const account = session.activeAccount;
+    reactionTone = readSkinTone(account);
+    const onToneChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ account: string | null; tone: SkinTone }>).detail;
+      if (detail?.account === account) reactionTone = detail.tone;
+    };
+    window.addEventListener(SKIN_TONE_CHANGE_EVENT, onToneChange);
+    return () => window.removeEventListener(SKIN_TONE_CHANGE_EVENT, onToneChange);
+  });
+
+  $effect(() => {
+    if (!ui.menu || emojiRows.length) return;
+    let active = true;
+    loadEmojis()
+      .then((rows) => { if (active) emojiRows = rows; })
+      .catch((error) => { if (active) ui.fail(error); });
+    return () => { active = false; };
+  });
 
   /** Picker targets remain readable during teardown. */
   const emojiChat = $derived(ui.emojiFor?.messages[0]?.chat ?? "");
@@ -1856,7 +1889,7 @@
     x={ui.menu.x}
     y={ui.menu.y}
     items={menuItems(m)}
-    reactions={QUICK_REACTIONS}
+    reactions={quickReactions}
     reactionReason={broadcastSendReason(m.chat)}
     current={messages.reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
     onreact={(emoji) => reactMessages([m], emoji)}

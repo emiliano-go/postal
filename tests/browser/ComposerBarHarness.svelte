@@ -122,18 +122,21 @@
 </script>
 
 <h1>Synthetic ComposerBar</h1>
+<div class="composer-fixture">
 <ComposerBar bind:draft bind:composerInput={input} replyingTo={null} replyAuthor="" replySnippet="" editing={null} {pending}
   bind:recording mentionMatches={[]} mentionIndex={0} onselectmention={noop} emojiToken={null} emojiMatches={[]} emojiIndex={0}
   onselectemoji={noop} bind:pickerTab selectedChat={chat} {account} {generation} {defaultQuality}
-  enqueue={(task) => task(new AbortController().signal)} takereply={() => ({})} onpickeremoji={noop} onpickersent={noop}
+  enqueue={(task) => task(new AbortController().signal)} takereply={() => ({})} onpickeremoji={(emoji) => { draft += emoji; }} onpickersent={noop}
   onpickererror={noop} onstage={noop} oncreatekind={(kind) => created.push(kind)} oninput={(event) => { draft = (event.currentTarget as HTMLTextAreaElement).value; }}
   {onkey} onsend={() => sends.push(draft)} oncancelreply={noop} oncanceledit={noop} onremove={noop} ontoggleonce={noop}
   onsendvoice={noop} onvoiceerror={noop} onreceipts={noop} ontyping={noop} receiptsHidden={false} typingHidden={false} onslashcommand={command} />
+</div>
 <output data-complete={complete}>{checks.length} passed</output>
 <ul>{#each checks as check}<li>{check}</li>{/each}</ul>
 {#if failed}<p data-failure role="alert">{failed}</p>{/if}
 
 <style>
+  .composer-fixture { margin-top: 320px; }
   :global(body) { margin: 24px; background: #111b21; color: #e9edef; font-family: system-ui; }
   :global(:root) { --surface: #202c33; --raised: #2a3942; --text: #e9edef; --muted: #8696a0; --line: #ffffff22; --accent: #00a884; --radius: 8px; --radius-sm: 6px; }
 </style>

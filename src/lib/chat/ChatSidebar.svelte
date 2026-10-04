@@ -8,6 +8,7 @@
   import { labels } from "$lib/state/labels.svelte";
   import { MEDIA_TYPES, emptyMediaOverrides } from "$lib/utils/auto-download";
   import { draftPreview } from "$lib/utils/drafts";
+  import { chatListRows, type ChatListRow } from "$lib/utils/chat-list";
   import type { MediaAutoDownload, MediaAutoDownloadOverrides } from "$lib/utils/wire";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -21,7 +22,7 @@
     ChatSummary,
     SearchResult,
   } from "$lib/utils/models";
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import type { Snippet } from "svelte";
   import { invoke } from "$lib/utils/ipc";
 
@@ -413,44 +414,56 @@
   // row in place but keep the captured order, so the row under the cursor
   // cannot jump away. The pending order applies on leave or on open/action.
   let listHover = $state(false);
-  let frozenOrder = $state<string[]>([]);
+  let frozenRows = $state<ChatListRow[]>([]);
+  let currentDay = $state(new Date());
+
+  onMount(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const refreshDay = () => {
+      currentDay = new Date();
+      frozenRows = [];
+      clearTimeout(timer);
+      const midnight = new Date(currentDay);
+      midnight.setHours(24, 0, 0, 0);
+      timer = setTimeout(refreshDay, midnight.getTime() - currentDay.getTime() + 50);
+    };
+    refreshDay();
+    window.addEventListener("focus", refreshDay);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", refreshDay);
+    };
+  });
 
   // Searching swaps the list for results, which removes a hovered <ul> without
   // firing mouseleave; without this reset the captured order would outlive the
   // pointer and the list would never re-sort again.
   $effect(() => {
     void searchQuery.trim();
+    void activeAccount;
+    void chatFilter;
     hidePreview();
     listHover = false;
-    frozenOrder = [];
+    frozenRows = [];
   });
 
   function onListEnter() {
     listHover = true;
-    if (freezeOnHover) frozenOrder = visibleChats.map((c) => c.chat);
+    if (freezeOnHover) frozenRows = chatListRows(visibleChats, currentDay, [], chatFilter !== "favorites");
   }
 
   function onListLeave() {
     listHover = false;
-    frozenOrder = [];
+    frozenRows = [];
   }
 
   function releaseFreeze() {
-    frozenOrder = [];
+    frozenRows = [];
   }
 
-  const displayedChats = $derived.by(() => {
-    if (!freezeOnHover || !listHover || frozenOrder.length === 0) return visibleChats;
-    const pos = new Map(frozenOrder.map((id, i) => [id, i] as const));
-    return [...visibleChats].sort((a, b) => {
-      const pa = pos.get(a.chat);
-      const pb = pos.get(b.chat);
-      if (pa === undefined && pb === undefined) return 0;
-      if (pa === undefined) return 1;
-      if (pb === undefined) return -1;
-      return pa - pb;
-    });
-  });
+  const displayedRows = $derived(chatListRows(
+    visibleChats, currentDay, freezeOnHover && listHover ? frozenRows : [], chatFilter !== "favorites",
+  ));
 </script>
 
 <aside class="chats" aria-label={t("nav.chats")}>
@@ -562,7 +575,10 @@
   {:else}
   <ul onmouseenter={onListEnter} onmouseleave={onListLeave} onwheel={hidePreview}
     onscroll={(e) => { if (e.target === e.currentTarget && previewFocusFrame === undefined) hidePreview(); }}>
-    {#each displayedChats as chat (chat.chat)}
+    {#each displayedRows as { chat, group }, i (chat.chat)}
+      {#if chatFilter !== "favorites" && (i === 0 || group !== displayedRows[i - 1].group)}
+        <li class="date-heading"><h2>{t(`chat.date_${group}`)}</h2></li>
+      {/if}
       <li>
         <div
           class="chat-row"
@@ -659,7 +675,7 @@
         </div>
       </li>
     {/each}
-    {#if displayedChats.length === 0}
+    {#if displayedRows.length === 0}
       <li class="empty">
         {chatFilter === "unread"
           ? t("nav.unread_empty")
@@ -1176,6 +1192,15 @@
     overflow-y: auto;
     overflow-x: hidden;
     flex: 1;
+  }
+  .date-heading {
+    padding: 12px 15px 5px;
+    color: var(--muted);
+  }
+  .date-heading h2 {
+    margin: 0;
+    font-size: 0.6875rem;
+    font-weight: 600;
   }
   .chat-row {
     position: relative;
