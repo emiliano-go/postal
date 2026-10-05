@@ -10,7 +10,7 @@
   {#each MEDIA_TYPES as [kind]}
     <label>
       <span>{t(`settings.media_${kind}`)}</span>
-      <input class="switch" type="checkbox" checked={value[kind]}
+      <input class="switch" data-setting-search-id={`media-download-${kind}`} type="checkbox" checked={value[kind]}
         onchange={(event) => onchange({ ...value, [kind]: event.currentTarget.checked })} />
     </label>
   {/each}

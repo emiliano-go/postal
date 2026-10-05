@@ -36,7 +36,7 @@
 
 <section class="notification-history" aria-label={t("content.notification_history")}>
   <header>
-    <div><h2>{t("content.notification_history")}</h2><p>{t("content.recent_notification_events_from_this_account")}</p></div>
+    <div><h2 data-setting-search-id="notifications-history" tabindex="-1">{t("content.notification_history")}</h2><p>{t("content.recent_notification_events_from_this_account")}</p></div>
     {#if onclose}<button type="button" class="close" onclick={onclose} aria-label={t("content.close_notification_history")}>×</button>{/if}
   </header>
   {#if !account}

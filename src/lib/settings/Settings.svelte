@@ -28,9 +28,12 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
+  import { MEDIA_TYPES } from "$lib/utils/auto-download";
+  import { customization, TOKENS } from "$lib/utils/theme.svelte";
+  import { dynamicSettingSearchFields, localizeSettingSearchFields, SETTING_SEARCH_FIELDS, type SettingSearchItem } from "$lib/utils/settings-search";
   import { base64Of as toBase64 } from "$lib/utils/files";
   import { once } from "$lib/state/once.svelte";
   import { getVersion } from "@tauri-apps/api/app";
@@ -481,9 +484,90 @@
       if (currentProfile(account, epoch)) profileBusy = false;
     }
   }
+
+  let searchFocusFailed = $state(false);
+  let settingsContent: HTMLDivElement | undefined = $state();
+  let focusRevision = 0;
+  let focusRequest: { id: string; section: Section; account: string | null; revision: number } | null = null;
+  let focusObserver: MutationObserver | undefined;
+  let focusTimeout: ReturnType<typeof setTimeout> | undefined;
+  let highlightTimeout: ReturnType<typeof setTimeout> | undefined;
+  let highlightedTarget: HTMLElement | undefined;
+  let previousSection = section;
+  let previousAccount = $state<string | null>(null);
+
+  const searchItems = $derived(localizeSettingSearchFields([
+    ...SETTING_SEARCH_FIELDS,
+    ...dynamicSettingSearchFields({ privacy: PRIVACY, keybinds: ACTIONS, mediaKinds: MEDIA_TYPES.map(([kind]) => kind), themeTokens: TOKENS }),
+  ].filter((field) => (field.id !== "notifications-system" || notifPermission !== "unsupported") &&
+    (field.id !== "appearance-picture-darken" || !!customization.background) &&
+    (field.id !== "chat-preview-delay" || draft.chat_preview) &&
+    (field.id !== "device-companion" || draft.keep_history) &&
+    (field.id !== "media-stickers" || (!!active && session.connected))), t, NAV.map(({ id }) => id)));
+
+  function clearSearchFocusWait() {
+    focusObserver?.disconnect();
+    focusObserver = undefined;
+    clearTimeout(focusTimeout);
+    focusTimeout = undefined;
+    focusRequest = null;
+  }
+
+  function focusSearchTarget(revision: number) {
+    const request = focusRequest;
+    if (!request || request.revision !== revision || section !== request.section || active !== request.account) return false;
+    const target = settingsContent?.querySelector<HTMLElement>(`[data-setting-search-id="${request.id}"]`);
+    if (!target?.isConnected || target.matches(":disabled")) return false;
+    for (let details = target.closest("details"); details; details = details.parentElement?.closest("details") ?? null) details.open = true;
+    target.focus({ preventScroll: true });
+    if (document.activeElement !== target) return false;
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+    if (highlightedTarget && highlightedTarget !== target) highlightedTarget.removeAttribute("data-setting-search-match");
+    highlightedTarget = target;
+    target.setAttribute("data-setting-search-match", "true");
+    clearTimeout(highlightTimeout);
+    highlightTimeout = setTimeout(() => target.removeAttribute("data-setting-search-match"), 1800);
+    clearSearchFocusWait();
+    searchFocusFailed = false;
+    return true;
+  }
+
+  async function jumpToSetting(item: SettingSearchItem) {
+    clearSearchFocusWait();
+    if (highlightedTarget) highlightedTarget.removeAttribute("data-setting-search-match");
+    searchFocusFailed = false;
+    const revision = ++focusRevision;
+    focusRequest = { id: item.id, section: item.section as Section, account: active, revision };
+    section = item.section as Section;
+    await tick();
+    if (focusRequest?.revision !== revision || section !== focusRequest.section || active !== focusRequest.account) return;
+    if (focusSearchTarget(revision)) return;
+    focusObserver = new MutationObserver(() => { focusSearchTarget(revision); });
+    if (settingsContent) focusObserver.observe(settingsContent, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+    focusTimeout = setTimeout(() => {
+      if (focusRequest?.revision !== revision) return;
+      clearSearchFocusWait();
+      searchFocusFailed = true;
+    }, 5000);
+  }
+
+  $effect(() => {
+    if (section === previousSection && active === previousAccount) return;
+    previousSection = section;
+    previousAccount = active;
+    searchFocusFailed = false;
+    if (focusRequest && (section !== focusRequest.section || active !== focusRequest.account)) clearSearchFocusWait();
+  });
+
+  onDestroy(() => {
+    clearSearchFocusWait();
+    clearTimeout(highlightTimeout);
+    highlightedTarget?.removeAttribute("data-setting-search-match");
+  });
 </script>
 
-<Panel label={t("settings.main.settings")} nav={NAV} bind:section {onclose}>
+<Panel label={t("settings.main.settings")} nav={NAV} bind:section {onclose}
+  {searchItems} onsearchresult={jumpToSetting} searchShortcut={true} bind:contentElement={settingsContent}>
   {#snippet header()}
       <div class="me">
         {#if meAvatar}
@@ -557,6 +641,7 @@
       <h2>{t("settings.main.about")}</h2>
       <p class="lede">{t("settings.main.about_hint")}</p>
     {/if}
+    {#if searchFocusFailed}<p class="error-text" role="alert">{t("settings.main.search_focus_failed")}</p>{/if}
   {/snippet}
 
         {#if section === "blocked"}
@@ -570,6 +655,7 @@
               <div class="picture">
                 <button
                   class="picture-edit"
+                  data-setting-search-id="profile-photo"
                   title={t("settings.main.change_photo")}
                   disabled={pictureBusy}
                   onclick={() => picker?.click()}>
@@ -604,11 +690,11 @@
               <div class="profile-fields">
                 <label class="field-label">
                   {t("settings.main.name")}
-                  <input class="field" dir="auto" maxlength="25" bind:value={nameDraft} disabled={profileBusy} />
+                  <input class="field" data-setting-search-id="profile-name" dir="auto" maxlength="25" bind:value={nameDraft} disabled={profileBusy} />
                 </label>
                 <label class="field-label">
                   {t("settings.main.profile_about")}
-                  <textarea class="field" dir="auto" rows="3" maxlength="139" bind:value={aboutDraft} disabled={profileBusy}></textarea>
+                  <textarea class="field" data-setting-search-id="profile-about" dir="auto" rows="3" maxlength="139" bind:value={aboutDraft} disabled={profileBusy}></textarea>
                 </label>
                 {#if profile.username}
                   <div class="field-label">
@@ -639,7 +725,7 @@
                 {t("settings.main.send_typing_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.send_typing} />
+            <input class="switch" data-setting-search-id="whatsapp-typing" type="checkbox" bind:checked={draft.send_typing} />
           </label>
           <label class="setting">
             <div>
@@ -648,7 +734,7 @@
                 {t("settings.main.send_receipts_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.send_receipts} />
+            <input class="switch" data-setting-search-id="whatsapp-receipts" type="checkbox" bind:checked={draft.send_receipts} />
           </label>
           {#if profile}
             {#each PRIVACY as item (item.category)}
@@ -657,6 +743,7 @@
                 <span class="setting-title">{t(item.label)}</span>
                 <select
                   class="field"
+                  data-setting-search-id={`whatsapp-privacy-${item.category}`}
                   {value}
                   disabled={profileBusy}
                   onchange={(e) => setPrivacy(item.category, e.currentTarget.value)}>
@@ -716,13 +803,13 @@
             {/each}
           </div>
           <div class="actions-row">
-            <button class="button primary" onclick={onadd}><Icon name="plus" size={15} /> {t("settings.main.add_account")}</button>
+            <button class="button primary" data-setting-search-id="accounts-add" onclick={onadd}><Icon name="plus" size={15} /> {t("settings.main.add_account")}</button>
           </div>
         {:else if section === "privacy"}
           <label class="setting">
             <div><span class="setting-title">{t("settings.encrypt_databases")}</span>
               <span class="setting-desc">{t("settings.encrypt_databases_description")}</span></div>
-            <input class="switch" type="checkbox" bind:checked={draft.encrypt_databases} />
+            <input class="switch" data-setting-search-id="privacy-encryption" type="checkbox" bind:checked={draft.encrypt_databases} />
           </label>
           {#if encryption?.error}<p class="error" role="alert"><bdi>{localizedMessage(encryption.error)}</bdi></p>{/if}
           {#if encryption?.diagnostic}<details><summary>{t("settings.encryption_diagnostics")}</summary><pre dir="ltr">{encryption.diagnostic}</pre></details>{/if}
@@ -734,7 +821,7 @@
               <span class="setting-title">{t("settings.main.ram_messages")}</span>
               <span class="setting-desc">{t("settings.main.ram_messages_hint", { min: 50, max: 2000, count: 150 })}</span>
             </div>
-            <input class="field number" type="number" min="50" max="2000" step="1" aria-label={t("settings.main.ram_messages")}
+            <input class="field number" data-setting-search-id="privacy-ram" type="number" min="50" max="2000" step="1" aria-label={t("settings.main.ram_messages")}
               value={draft.message_window_size} oninput={(e) => {
                 if (e.currentTarget.validity.valid && e.currentTarget.value) draft.message_window_size = Number(e.currentTarget.value);
               }} />
@@ -746,7 +833,7 @@
                 {t("settings.main.keep_history_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.keep_history} />
+            <input class="switch" data-setting-search-id="privacy-history" type="checkbox" bind:checked={draft.keep_history} />
           </label>
           <div class="setting stack">
             <div>
@@ -757,6 +844,7 @@
             </div>
             <input
               class="field wide"
+              data-setting-search-id="privacy-history-folder"
               dir="ltr"
               placeholder={t("settings.main.app_data_folder")}
               value={draft.history_dir ?? ""}
@@ -772,6 +860,7 @@
             <span class="unit-field">
               <input
                 class="field number"
+                data-setting-search-id="privacy-retention-age"
                 type="number"
                 min="1"
                 value={limitValue(draft.retention.max_age_hours) === null ? "" : limitValue(draft.retention.max_age_hours)! / ageUnit}
@@ -797,6 +886,7 @@
             </div>
             <input
               class="field number"
+              data-setting-search-id="privacy-retention-count"
               type="number"
               min="1"
               value={limitValue(draft.retention.max_messages_per_chat) ?? ""}
@@ -812,7 +902,7 @@
                 {t("settings.main.request_full_history_hint", { count: 10000 })}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.request_full_history} />
+            <input class="switch" data-setting-search-id="privacy-full-history" type="checkbox" bind:checked={draft.request_full_history} />
           </label>
           <div class="setting">
             <div>
@@ -824,6 +914,7 @@
             </div>
             <button
               class="button"
+              data-setting-search-id="privacy-backfill"
               onclick={() => {
                 backfillError = null;
                 invoke("backfill_history").catch((e) => (backfillError = normalizeError(e)));
@@ -841,13 +932,14 @@
                 <button class="button" onclick={() => (clearingHistory = false)}>{t("settings.main.cancel")}</button>
                 <button
                   class="button danger"
+                  data-setting-search-id="privacy-clear-history"
                   onclick={() => {
                     clearingHistory = false;
                     onclearhistory();
                   }}>{t("settings.main.delete_all")}</button>
               </span>
             {:else}
-              <button class="button danger" onclick={() => (clearingHistory = true)}>{t("settings.main.clear_history")}</button>
+              <button class="button danger" data-setting-search-id="privacy-clear-history" onclick={() => (clearingHistory = true)}>{t("settings.main.clear_history")}</button>
             {/if}
           </div>
           <ArchiveManager />
@@ -861,7 +953,7 @@
                 {t("settings.main.keep_archived_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
+            <input class="switch" data-setting-search-id="chat-keep-archived" type="checkbox" bind:checked={draft.keep_archived} />
           </label>
           <label class="setting">
             <div>
@@ -870,7 +962,7 @@
                 {t("settings.main.freeze_hover_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.freeze_chat_list_on_hover} />
+            <input class="switch" data-setting-search-id="chat-freeze-hover" type="checkbox" bind:checked={draft.freeze_chat_list_on_hover} />
           </label>
           <label class="setting">
             <div>
@@ -879,7 +971,7 @@
                 {t("settings.main.chat_preview_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.chat_preview} />
+            <input class="switch" data-setting-search-id="chat-preview" type="checkbox" bind:checked={draft.chat_preview} />
           </label>
           <div class="setting">
             <div>
@@ -890,6 +982,7 @@
             </div>
             <span class="unit-field">
               <input
+                data-setting-search-id="chat-preview-delay"
                 type="range"
                 min="100"
                 max="3000"
@@ -902,6 +995,7 @@
                 }} />
               <input
                 class="field number"
+                data-setting-search-id="chat-preview-delay"
                 type="number"
                 min="100"
                 max="3000"
@@ -923,7 +1017,7 @@
                 {t("settings.main.export_metadata_hint")}
               </span>
             </div>
-            <button class="button" disabled={!spacesReady || spaceBusy} onclick={exportSpaces}>
+            <button class="button" data-setting-search-id="spaces-export" disabled={!spacesReady || spaceBusy} onclick={exportSpaces}>
               {spaceBusy ? t("settings.main.working") : t("settings.main.export")}
             </button>
           </div>
@@ -940,7 +1034,7 @@
                 {t("settings.main.import_metadata_hint")}
               </span>
             </div>
-            <textarea class="field" dir="ltr" rows="8" placeholder={t("settings.main.metadata_placeholder")} bind:value={spaceImport} disabled={spaceBusy}></textarea>
+            <textarea class="field" data-setting-search-id="spaces-import" dir="ltr" rows="8" placeholder={t("settings.main.metadata_placeholder")} bind:value={spaceImport} disabled={spaceBusy}></textarea>
             <div class="actions-row">
               <button class="button" disabled={!spacesReady || spaceBusy || !spaceImport.trim()} onclick={importSpaces}>
                 {spaceBusy ? t("settings.main.importing") : t("settings.main.import")}
@@ -958,6 +1052,7 @@
             </div>
             <input
               class="switch"
+              data-setting-search-id="notifications-enabled"
               type="checkbox"
               checked={draft.notifications_enabled}
               onchange={(e) => {
@@ -982,7 +1077,7 @@
                 {t("settings.main.mute_all_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.mute_all_at_all} />
+            <input class="switch" data-setting-search-id="notifications-mute-all" type="checkbox" bind:checked={draft.mute_all_at_all} />
           </label>
           {#if !draft.mute_all_at_all}
             <div class="setting stack">
@@ -1009,15 +1104,15 @@
               </span>
             </div>
             {#if notifPermission === "prompt"}
-              <button class="button" disabled={notifBusy} onclick={requestNotifPermission}>
+              <button class="button" data-setting-search-id="notifications-system" disabled={notifBusy} onclick={requestNotifPermission}>
                 {notifBusy ? t("settings.main.asking") : t("settings.main.allow")}
               </button>
             {:else if notifPermission === "denied"}
-              <button class="button" disabled={notifBusy} onclick={refreshNotifPermission}>
+              <button class="button" data-setting-search-id="notifications-system" disabled={notifBusy} onclick={refreshNotifPermission}>
                 {notifBusy ? t("settings.main.checking") : t("settings.main.recheck")}
               </button>
             {:else if notifPermission === "granted"}
-              <button class="button" onclick={() => void sendTestNotification()}>{t("settings.main.test")}</button>
+              <button class="button" data-setting-search-id="notifications-system" onclick={() => void sendTestNotification()}>{t("settings.main.test")}</button>
             {/if}
           </div>
           <div class="setting">
@@ -1071,10 +1166,10 @@
                   {/if}
                   <PhoneLink onactivate={() => (oncePhoneMode = true)} />
                 {/if}
-                <button class="button" onclick={() => once.cancelPair()}>{t("settings.main.cancel")}</button>
+              <button class="button" data-setting-search-id="device-companion" onclick={() => once.cancelPair()}>{t("settings.main.cancel")}</button>
               </div>
             {:else}
-              <button class="button" onclick={() => once.pair()} disabled={!draft.keep_history}>
+              <button class="button" data-setting-search-id="device-companion" onclick={() => once.pair()} disabled={!draft.keep_history}>
                 {t("settings.main.pair_companion")}
               </button>
               {#if !draft.keep_history}
@@ -1093,6 +1188,7 @@
               </div>
               <input
                 class="switch"
+                data-setting-search-id="device-companion"
                 type="checkbox"
                 bind:checked={draft.android_instance}
                 disabled={!draft.keep_history} />
@@ -1128,7 +1224,7 @@
           <label class="setting">
             <div><span class="setting-title">{t("settings.main.upload_quality")}</span>
               <span class="setting-desc">{t("settings.main.upload_quality_hint", { pixels: 1600, resolution: 480 })}</span></div>
-            <select bind:value={draft.media_quality} aria-label={t("settings.main.upload_quality")}>
+            <select data-setting-search-id="media-quality" bind:value={draft.media_quality} aria-label={t("settings.main.upload_quality")}>
               <option value="standard">{t("settings.main.standard")}</option><option value="hd">{t("settings.main.hd")}</option>
             </select>
           </label>
@@ -1143,7 +1239,7 @@
               <span class="setting-title">{t("settings.main.video_preview_warning")}</span>
               <span class="setting-desc">{t("settings.main.video_preview_warning_hint")}</span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.warn_missing_video_preview} />
+            <input class="switch" data-setting-search-id="media-preview-warning" type="checkbox" bind:checked={draft.warn_missing_video_preview} />
           </label>
           <div class="setting stack">
             <div>
@@ -1152,6 +1248,7 @@
             </div>
             <input
               class="field wide"
+              data-setting-search-id="media-folder"
               dir="ltr"
               placeholder={t("settings.main.app_cache_folder")}
               value={draft.media_dir ?? ""}
@@ -1162,7 +1259,7 @@
               <span class="setting-title">{t("settings.main.clear_downloaded_media")}</span>
               <span class="setting-desc">{t("settings.main.clear_downloaded_media_hint")}</span>
             </div>
-            <button class="button danger" onclick={onflush}>{t("settings.main.clear_media")}</button>
+            <button class="button danger" data-setting-search-id="media-clear" onclick={onflush}>{t("settings.main.clear_media")}</button>
           </div>
           <StorageManager />
         {:else if section === "linked"}
@@ -1178,7 +1275,7 @@
         {:else if section === "startup"}
           <label class="setting">
             <div><span class="setting-title">{t("settings.main.start_on_login")}</span><span class="setting-desc">{t("settings.main.start_on_login_hint")}</span></div>
-            <input class="switch" type="checkbox" bind:checked={draft.start_on_login} />
+            <input class="switch" data-setting-search-id="startup-login" type="checkbox" bind:checked={draft.start_on_login} />
           </label>
           {#if desktopStatus}
             <p class="setting-desc">{t(desktopStatus.start_on_login ? "settings.main.start_on_login_enabled" : "settings.main.start_on_login_disabled")}</p>
@@ -1191,7 +1288,7 @@
                 {t("settings.main.skip_loading_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.skip_loading_screen} />
+            <input class="switch" data-setting-search-id="startup-skip-loading" type="checkbox" bind:checked={draft.skip_loading_screen} />
           </label>
         {:else if section === "keybinds"}
           {#each ACTIONS as action (action.id)}
@@ -1208,6 +1305,7 @@
               <div class="keybind">
                 <button
                   class="button"
+                  data-setting-search-id={`keybind-${action.id}`}
                   class:capturing={capturing === action.id}
                   onclick={() => (capturing = capturing === action.id ? null : action.id)}>
                   {#if capturing === action.id}{t("settings.main.press_keys")}{:else}<bdi dir="ltr">{bindingLabel(action.id)}</bdi>{/if}
@@ -1241,13 +1339,13 @@
               <span class="setting-title">{t("settings.main.reset_keybinds")}</span>
               <span class="setting-desc">{t("settings.main.reset_keybinds_hint")}</span>
             </div>
-            <button class="button danger" onclick={resetBindings}>{t("settings.main.reset_all")}</button>
+            <button class="button danger" data-setting-search-id="keybind-reset-all" onclick={resetBindings}>{t("settings.main.reset_all")}</button>
           </div>
         {:else if section === "appearance"}
           <label class="setting">
             <div><span class="setting-title">{t("settings.language")}</span>
               <span class="setting-desc">{t("settings.language_description")}</span></div>
-            <select class="field" aria-label={t("settings.language")} value={locale.preference}
+            <select class="field" data-setting-search-id="appearance-language" aria-label={t("settings.language")} value={locale.preference}
               oninput={(event) => void locale.setPreference(event.currentTarget.value as LocalePreference)}>
               <option value="system">{t("settings.language_system")}</option>
               <option value="en">{localeNames.en}</option><option value="ar">{localeNames.ar}</option>
@@ -1265,7 +1363,7 @@
                 {t("settings.main.verbose_logs_hint")}
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.verbose_whatsapp_logs} />
+            <input class="switch" data-setting-search-id="advanced-verbose-logs" type="checkbox" bind:checked={draft.verbose_whatsapp_logs} />
           </label>
         {:else}
           <div class="setting">
@@ -1546,4 +1644,5 @@
     color: var(--danger);
     font-weight: 600;
   }
+  :global([data-setting-search-match="true"]) { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>

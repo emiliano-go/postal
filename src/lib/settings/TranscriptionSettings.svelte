@@ -69,7 +69,7 @@
   <h3>{t("settings.transcription")}</h3>
   {#if draft && view}
     <label>{t("settings.plugin")}
-      <select value={draft.plugin_id ?? ""} disabled={busy} onchange={(event) => choosePlugin(event.currentTarget.value)}>
+      <select data-setting-search-id="transcription-plugin" value={draft.plugin_id ?? ""} disabled={busy} onchange={(event) => choosePlugin(event.currentTarget.value)}>
         <option value="">{t("ui.disabled")}</option>
         {#each view.plugins as plugin}<option value={plugin.id}>{plugin.name}</option>{/each}
       </select>
@@ -77,7 +77,7 @@
     {#if !view.plugins.length}<p>{t("settings.transcription_install")}</p>{/if}
     {#if plugin}
       <label>{t("settings.provider")}
-        <select bind:value={draft.provider} disabled={busy}>
+        <select data-setting-search-id="transcription-provider" bind:value={draft.provider} disabled={busy}>
           <option value="" disabled>{t("settings.provider_choose")}</option>
           {#each providers as provider}<option value={provider.id}>{provider.name}{provider.transmits_audio ? t("settings.provider_cloud_suffix") : t("settings.provider_local_suffix")}</option>{/each}
         </select>
@@ -88,11 +88,11 @@
             <span class="setting-title">{t("settings.transcription_trust")}</span>
             <span class="setting-desc">{t("settings.native_plugin_access")}</span>
           </div>
-          <input class="switch" type="checkbox" bind:checked={trust} disabled={busy} />
+          <input class="switch" data-setting-search-id="transcription-trust" type="checkbox" bind:checked={trust} disabled={busy} />
         </label>
-        <button class="button" disabled={busy || !trust || !provider} onclick={() => perform(() => enable(true), true)}>{t("settings.grant_enable")}</button>
+        <button class="button" data-setting-search-id="transcription-enable" disabled={busy || !trust || !provider} onclick={() => perform(() => enable(true), true)}>{t("settings.grant_enable")}</button>
       {:else}
-        <button class="button" disabled={busy} onclick={() => perform(() => enable(false), true)}>{t("settings.transcription_disable")}</button>
+        <button class="button" data-setting-search-id="transcription-disable" disabled={busy} onclick={() => perform(() => enable(false), true)}>{t("settings.transcription_disable")}</button>
       {/if}
       {#if provider?.transmits_audio}
         <p>{t("settings.transcription_cloud_hint")}</p>
@@ -101,38 +101,38 @@
             <span class="setting-title">{t("settings.transcription_consent")}</span>
             <span class="setting-desc">{t("settings.transcription_consent_auto")}</span>
           </div>
-          <input class="switch" type="checkbox" checked={cloudConsent} disabled={busy} onchange={(event) => perform(() => consent(event.currentTarget.checked), true)} />
+          <input class="switch" data-setting-search-id="transcription-cloud-consent" type="checkbox" checked={cloudConsent} disabled={busy} onchange={(event) => perform(() => consent(event.currentTarget.checked), true)} />
         </label>
         {#if provider.requires_key}
           <p>{t("settings.api_key_state", { state: t(view.settings.plugin_id === draft.plugin_id && view.settings.provider === draft.provider && view.key_configured ? "settings.api_key_configured" : "settings.api_key_missing") })}</p>
-          <button class="button" disabled={busy} onclick={() => perform(() => key(false), true)}>{t("settings.api_key_configure")}</button>
-          <button class="button" disabled={busy} onclick={() => perform(() => key(true), true)}>{t("settings.api_key_remove")}</button>
+          <button class="button" data-setting-search-id="transcription-api-key" disabled={busy} onclick={() => perform(() => key(false), true)}>{t("settings.api_key_configure")}</button>
+          <button class="button" data-setting-search-id="transcription-api-key-remove" disabled={busy} onclick={() => perform(() => key(true), true)}>{t("settings.api_key_remove")}</button>
         {/if}
       {/if}
       {#if provider?.kind === "local" || provider?.id === "openai"}
-        <label>{t("settings.decoder_executable")}<input dir="ltr" value={draft.decoder_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.decoder_executable = event.currentTarget.value || null)} placeholder={t("settings.decoder_path")} /></label>
+        <label>{t("settings.decoder_executable")}<input data-setting-search-id="transcription-decoder" dir="ltr" value={draft.decoder_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.decoder_executable = event.currentTarget.value || null)} placeholder={t("settings.decoder_path")} /></label>
       {/if}
       {#if provider?.id === "local-whisper"}
-        <label>{t("settings.whisper_executable")}<input dir="ltr" value={draft.whisper_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.whisper_executable = event.currentTarget.value || null)} placeholder={t("settings.whisper_path")} /></label>
-        <label>{t("settings.model_filename")}<input dir="ltr" value={draft.model ?? ""} disabled={busy} onchange={(event) => draft && (draft.model = event.currentTarget.value || null)} /></label>
-        <label>{t("settings.model_hash")}<input dir="ltr" value={draft.model_sha256 ?? ""} disabled={busy} onchange={(event) => draft && (draft.model_sha256 = event.currentTarget.value || null)} /></label>
+        <label>{t("settings.whisper_executable")}<input data-setting-search-id="transcription-whisper" dir="ltr" value={draft.whisper_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.whisper_executable = event.currentTarget.value || null)} placeholder={t("settings.whisper_path")} /></label>
+        <label>{t("settings.model_filename")}<input data-setting-search-id="transcription-model-filename" dir="ltr" value={draft.model ?? ""} disabled={busy} onchange={(event) => draft && (draft.model = event.currentTarget.value || null)} /></label>
+        <label>{t("settings.model_hash")}<input data-setting-search-id="transcription-model-hash" dir="ltr" value={draft.model_sha256 ?? ""} disabled={busy} onchange={(event) => draft && (draft.model_sha256 = event.currentTarget.value || null)} /></label>
         {#if view.data_directory}<p>{t("settings.models_directory", { path: view.data_directory })}</p>{/if}
-        <label>{t("settings.model_url")}<input type="url" dir="ltr" bind:value={modelUrl} disabled={busy} placeholder={t("settings.url_example")} /></label>
+        <label>{t("settings.model_url")}<input data-setting-search-id="transcription-model-url" type="url" dir="ltr" bind:value={modelUrl} disabled={busy} placeholder={t("settings.url_example")} /></label>
         <p>{t("settings.model_download_hint")}</p>
-        <button class="button" disabled={busy || !plugin.enabled || !modelUrl.startsWith("https://") || !draft.model || draft.model_sha256?.length !== 64} onclick={() => perform(installModel, true)}>{t("settings.model_download")}</button>
+        <button class="button" data-setting-search-id="transcription-model-download" disabled={busy || !plugin.enabled || !modelUrl.startsWith("https://") || !draft.model || draft.model_sha256?.length !== 64} onclick={() => perform(installModel, true)}>{t("settings.model_download")}</button>
       {/if}
-      <label>{t("settings.transcription_language")}<input dir="ltr" value={draft.language ?? ""} disabled={busy} onchange={(event) => draft && (draft.language = event.currentTarget.value || null)} placeholder={t("settings.transcription_language_hint")} /></label>
-      <label>{t("settings.transcription_idle")}<input type="number" min="1" max="86400" value={draft.idle_timeout_secs ?? ""} disabled={busy} onchange={(event) => draft && (draft.idle_timeout_secs = event.currentTarget.value ? Number(event.currentTarget.value) : null)} placeholder={t("settings.immediate")} /></label>
-      <button class="button" disabled={busy || !provider} onclick={() => perform(save, true)}>{t("settings.transcription_save")}</button>
+      <label>{t("settings.transcription_language")}<input data-setting-search-id="transcription-language" dir="ltr" value={draft.language ?? ""} disabled={busy} onchange={(event) => draft && (draft.language = event.currentTarget.value || null)} placeholder={t("settings.transcription_language_hint")} /></label>
+      <label>{t("settings.transcription_idle")}<input data-setting-search-id="transcription-idle-timeout" type="number" min="1" max="86400" value={draft.idle_timeout_secs ?? ""} disabled={busy} onchange={(event) => draft && (draft.idle_timeout_secs = event.currentTarget.value ? Number(event.currentTarget.value) : null)} placeholder={t("settings.immediate")} /></label>
+      <button class="button" data-setting-search-id="transcription-save" disabled={busy || !provider} onclick={() => perform(save, true)}>{t("settings.transcription_save")}</button>
     {:else}
-      <button class="button" disabled={busy} onclick={() => perform(save, true)}>{t("settings.transcription_save")}</button>
+      <button class="button" data-setting-search-id="transcription-save" disabled={busy} onclick={() => perform(save, true)}>{t("settings.transcription_save")}</button>
     {/if}
     <label class="setting">
       <div>
         <span class="setting-title">{t("settings.transcription_auto_downloaded")}</span>
         <span class="setting-desc">{t("settings.transcription_auto_hint")}</span>
       </div>
-      <input class="switch" type="checkbox" checked={autoTranscribe} disabled={busy} onchange={(event) => perform(() => onAutoTranscribe(event.currentTarget.checked))} />
+      <input class="switch" data-setting-search-id="transcription-auto" type="checkbox" checked={autoTranscribe} disabled={busy} onchange={(event) => perform(() => onAutoTranscribe(event.currentTarget.checked))} />
     </label>
     {#each failures as failure}<p role="alert">{failure.message}</p>{#if failure.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{failure.diagnostic}</pre></details>{/if}{/each}
   {/if}

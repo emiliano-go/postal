@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Settings search fixture</title></head>
+  <body><div id="app"></div><script type="module">
+    import { mockConvertFileSrc, mockIPC } from "@tauri-apps/api/mocks";
+    import { mount } from "svelte";
+    import { applyTheme, BUILT_IN } from "$lib/utils/theme.svelte";
+    import { locale } from "$lib/i18n/locale.svelte";
+    import SettingsSearchHarness from "./SettingsSearchHarness.svelte";
+    mockConvertFileSrc("windows");
+    mockIPC((command) => command === "plugin:app|version" ? "0.1.0" : null);
+    await locale.init();
+    applyTheme(BUILT_IN.find((theme) => theme.id === "dark"));
+    mount(SettingsSearchHarness, { target: document.getElementById("app") });
+  </script></body>
+</html>

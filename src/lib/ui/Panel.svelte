@@ -7,6 +7,7 @@
   import { cubicOut } from "svelte/easing";
   import Icon from "$lib/ui/Icon.svelte";
   import { onMount } from "svelte";
+  import { matchSettingSearch, settingsSearchShortcut, type SettingSearchItem } from "$lib/utils/settings-search";
 
   let {
     label,
@@ -17,6 +18,10 @@
     children,
     footer,
     onclose,
+    searchItems = [],
+    onsearchresult,
+    searchShortcut = false,
+    contentElement = $bindable(),
   }: {
     label: string;
     nav: { id: S; label: string; group: string }[];
@@ -26,13 +31,19 @@
     children: Snippet;
     footer?: Snippet;
     onclose: () => void;
+    searchItems?: SettingSearchItem[];
+    onsearchresult?: (item: SettingSearchItem) => void;
+    searchShortcut?: boolean;
+    contentElement?: HTMLDivElement;
   } = $props();
 
   let query = $state("");
+  let searchInput: HTMLInputElement | undefined = $state();
   const shown = $derived(
     nav.filter((n) => n.label.toLowerCase().includes(query.trim().toLowerCase())),
   );
   const groups = $derived([...new Set(shown.map((n) => n.group))]);
+  const matchingSettings = $derived(matchSettingSearch(searchItems, query));
 
   // Focus management (WCAG 2.4.3/2.4.7): trap Tab inside the dialog, focus the
   // dialog on open, and restore focus to the opener on close.
@@ -64,12 +75,21 @@
       first.focus();
     }
   }
+
+  function onWindowKey(e: KeyboardEvent) {
+    if (searchShortcut && settingsSearchShortcut(e)) {
+      const target = e.target instanceof Element ? e.target : document.activeElement;
+      const owner = target instanceof Element ? target.closest("dialog, [role='dialog'], [role='alertdialog']") : null;
+      if (!modal?.contains(target) || (owner && owner !== modal)) return;
+      e.preventDefault();
+      searchInput?.focus();
+      searchInput?.select();
+    } else if (e.key === "Escape") onclose();
+    else trapTab(e);
+  }
 </script>
 
-<svelte:window onkeydown={(e) => {
-  if (e.key === "Escape") onclose();
-  else trapTab(e);
-}} />
+<svelte:window onkeydown={onWindowKey} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
@@ -91,8 +111,25 @@
 
       <label class="nav-search">
         <Icon name="search" size={14} />
-        <input placeholder={t("ui.search")} bind:value={query} />
+        <input bind:this={searchInput} aria-label={t(searchShortcut ? "settings.main.search_placeholder" : "ui.search")}
+          placeholder={t(searchShortcut ? "settings.main.search_placeholder" : "ui.search")} bind:value={query} />
       </label>
+
+      {#if searchShortcut && query.trim() && (matchingSettings.length || !shown.length)}
+        <div class="search-results" aria-label={t("settings.main.search_results")}>
+          {#if matchingSettings.length}
+            <span class="nav-group">{t("settings.main.search_results")}</span>
+            {#each matchingSettings as item (item.id)}
+              <button class="nav-item search-result" onclick={() => { query = ""; onsearchresult?.(item); }}>
+                <span>{item.title}</span>
+                {#if item.description}<small>{item.description}</small>{/if}
+              </button>
+            {/each}
+          {:else}
+            <p class="search-empty" role="status">{t("settings.main.search_no_results")}</p>
+          {/if}
+        </div>
+      {/if}
 
       {#each groups as group (group)}
         <span class="nav-group">{group}</span>
@@ -113,7 +150,7 @@
           <span>{t("ui.escape_key")}</span>
         </button>
       </div>
-      <div class="content">{@render children()}</div>
+      <div class="content" bind:this={contentElement}>{@render children()}</div>
       {@render footer?.()}
     </main>
   </div>
@@ -195,6 +232,9 @@
     background: var(--raised-2);
     color: var(--text);
   }
+  .search-result { display: grid; gap: 3px; }
+  .search-result small, .search-empty { margin: 0; color: var(--muted); font-size: .75rem; font-weight: 400; line-height: 1.35; }
+  .search-empty { padding: 8px 10px; }
   main {
     position: relative;
     display: flex;

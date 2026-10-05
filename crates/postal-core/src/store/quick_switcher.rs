@@ -117,14 +117,16 @@ impl MessageStore {
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").to_lowercase();
         let pattern = format!("%{escaped}%");
         let conn = self.conn.lock().unwrap();
+        let (fts_clause, fts_pattern) = search_index::clause(&conn, query, 3, false)?;
         let mut stmt = conn.prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages m
             LEFT JOIN names n ON n.jid = m.sender
             WHERE lower(m.text) LIKE ?1 ESCAPE '\\' AND m.deleted = 0 AND m.revoked = 0
               AND m.system_kind IS NULL AND m.spoiler = 0 AND COALESCE(m.media_kind, '') != 'view_once'
               AND NOT EXISTS (SELECT 1 FROM view_once v WHERE v.chat = m.chat AND v.id = m.id)
               AND NOT EXISTS (SELECT 1 FROM hidden_chats h WHERE h.jid = m.chat)
+              {fts_clause}
             ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC, m.chat ASC LIMIT ?2"))?;
-        let rows = stmt.query_map(params![pattern, limit.clamp(1, 50)], message_row)?;
+        let rows = stmt.query_map(params![pattern, limit.clamp(1, 50), fts_pattern], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 }

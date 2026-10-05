@@ -241,14 +241,16 @@ impl MessageStore {
         let pattern = format!("%{}%", escaped.to_lowercase());
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
+        let (fts_clause, fts_pattern) = search_index::clause(&conn, query, 4, true)?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
              WHERE m.chat = ?1 AND (lower(m.text) LIKE ?2 ESCAPE '\\' OR lower(m.link_urls) LIKE ?2 ESCAPE '\\') AND m.deleted = 0
+             {fts_clause}
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?3"
         ))?;
-        let rows = stmt.query_map(params![chat, pattern, limit], message_row)?;
+        let rows = stmt.query_map(params![chat, pattern, limit, fts_pattern], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 

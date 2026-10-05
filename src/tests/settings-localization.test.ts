@@ -9,6 +9,7 @@ import arabic from "../lib/i18n/locales/ar.json" with { type: "json" };
 import { messageText, normalizeError, LocalizedError } from "../lib/i18n/errors.ts";
 
 const source = readFileSync(new URL("../lib/settings/Settings.svelte", import.meta.url), "utf8");
+const panelSource = readFileSync(new URL("../lib/ui/Panel.svelte", import.meta.url), "utf8");
 const ownedKeys = (catalog: Catalog): Catalog => Object.fromEntries(Object.entries(catalog)
   .filter(([key]) => key.startsWith("settings.main.") || key.startsWith("error.settings_") && source.includes(key)));
 const fragment = { en: ownedKeys(englishCatalog), ar: ownedKeys(arabic) };
@@ -27,7 +28,7 @@ function functions(context: Record<string, any>) {
 test("Settings fragment covers every message/table/keybind with matching Arabic parameters", () => {
   const en = parseCatalog(fragment.en), ar = parseCatalog(fragment.ar);
   assert.deepEqual(Object.keys(en).sort(), Object.keys(ar).sort());
-  const references = new Set([...source.matchAll(/settings\.main\.[A-Za-z0-9_.]+|error\.settings_[A-Za-z0-9_]+/g)].map((match) => match[0]));
+  const references = new Set([...`${source}\n${panelSource}`.matchAll(/settings\.main\.[A-Za-z0-9_.]+|error\.settings_[A-Za-z0-9_]+/g)].map((match) => match[0]));
   references.delete("settings.main.key_"); references.delete("settings.main.keybind.");
   for (const id of actionIds) for (const field of ["label", "description"]) references.add(`settings.main.keybind.${id}.${field}`);
   for (const key of ["space", "enter", "tab", "backspace", "delete", "escape"]) references.add(`settings.main.key_${key}`);

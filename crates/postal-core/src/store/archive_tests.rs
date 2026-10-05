@@ -45,6 +45,8 @@ fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     let connection = Connection::open(&backup.join("messages.db")).unwrap();
     assert_eq!(connection.pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0)).unwrap(), "delete");
     assert_eq!(connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='session_credentials'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM message_search WHERE text LIKE '%message%'", [],
+        |r| r.get::<_, i64>(0)).unwrap(), 1003);
     for path in attachment_paths(&connection).unwrap() {
         assert!(path.starts_with("media/") && !path.contains('\\'), "nonportable backup path: {path}");
         assert_eq!(path.split('/').count(), 2);
@@ -72,6 +74,10 @@ fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     restore_backup(&backup, &account, &restored_media).unwrap();
     let restored = MessageStore::open(&account.join("messages.db")).unwrap();
     assert_eq!(restored.count().unwrap(), 1003);
+    assert_eq!(restored.search_messages("test@s", "message 1001", 10).unwrap()[0].header.id, "m1001");
+    assert_eq!(restored.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM messages m
+        JOIN message_search f ON f.rowid=m.rowid WHERE f.text LIKE '%message%'", [],
+        |r| r.get::<_, i64>(0)).unwrap(), 1003);
     assert_eq!(restored.message("test@s", "m0000").unwrap().local.sort_order,
         store.message("test@s", "m0000").unwrap().local.sort_order);
     assert_eq!(restored.name_for("sender@s").unwrap().as_deref(), Some("Synthetic sender"));

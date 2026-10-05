@@ -203,6 +203,7 @@
       {@const o = option.tokens}
       <button
         class="theme-card"
+        data-setting-search-id="appearance-theme"
         class:active={option.id === theme.id}
         aria-pressed={option.id === theme.id}
         onclick={() => (customization.theme = option.id)}>
@@ -312,6 +313,7 @@
         {#each ACCENTS as color (color)}
           <button
             class="accent-dot"
+            data-setting-search-id="appearance-accent"
             class:active={t.accent?.toLowerCase() === color}
             style:background={color}
             aria-label={tr("settings.accent_name", { color })}
@@ -322,6 +324,7 @@
           class:active={!ACCENTS.includes(t.accent?.toLowerCase() ?? "")}
           title={tr("settings.custom_colour")}>
           <input
+            data-setting-search-id="appearance-accent"
             type="color"
             value={hex(t.accent)}
             aria-label={tr("settings.custom_accent")}
@@ -344,7 +347,7 @@
         accept="image/*"
         bind:this={picturePicker}
         onchange={(e) => setBackground(e.currentTarget.files?.[0])} />
-      <Button variant="ghost" onclick={() => picturePicker?.click()}>
+      <Button variant="ghost" data-setting-search-id="appearance-background" onclick={() => picturePicker?.click()}>
         {customization.background ? tr("ui.change") : tr("ui.choose")}
       </Button>
       {#if customization.background}
@@ -360,6 +363,7 @@
         </div>
         <div class="slider">
           <input
+            data-setting-search-id="appearance-picture-darken"
             type="range"
             min="0"
             max="0.85"
@@ -379,6 +383,7 @@
       </div>
       <div class="slider">
         <input
+          data-setting-search-id="appearance-text-size"
           type="range"
           min="12"
           max="18"
@@ -398,6 +403,7 @@
       <div class="segmented" role="radiogroup" aria-label={tr("settings.density")}>
         {#each DENSITIES as [value, label] (value)}
           <button
+            data-setting-search-id="appearance-density"
             role="radio"
             aria-checked={(customization.density ?? "comfortable") === value}
             class:active={(customization.density ?? "comfortable") === value}
@@ -413,6 +419,7 @@
       </div>
       <div class="slider">
         <input
+          data-setting-search-id="appearance-chat-width"
           type="range"
           min="180"
           max="640"
@@ -431,6 +438,7 @@
       </div>
       <div class="slider">
         <input
+          data-setting-search-id="appearance-roundness"
           type="range"
           min="0"
           max="18"
@@ -450,6 +458,7 @@
       <div class="segmented" role="radiogroup" aria-label={tr("settings.animations")}>
         {#each MOTION as [value, label] (value)}
           <button
+            data-setting-search-id="appearance-animations"
             role="radio"
             aria-checked={Number(t["motion-scale"] ?? "1") === Number(value)}
             class:active={Number(t["motion-scale"] ?? "1") === Number(value)}
@@ -461,7 +470,7 @@
 </section>
 
 <section class="block">
-  <h3>{tr("settings.fine_tune")}</h3>
+  <h3 data-setting-search-id="appearance-fine-tune" tabindex="-1">{tr("settings.fine_tune")}</h3>
   <p class="hint">{tr("settings.fine_tune_hint")}</p>
   <div class="groups">
     {#each groups as group (group)}
@@ -483,7 +492,7 @@
             <div class="token">
               {#if rgba(value)}
                 <label class="chip swatch" style:--c={value} title={tr("settings.pick_colour")}>
-                  <input
+                <input
                     type="color"
                     value={hex(value)}
                     aria-label={tr("settings.token_colour", { name: tr(`settings.token_${token.key}`) })}
@@ -495,6 +504,7 @@
               <span class="token-label">{tr(`settings.token_${token.key}`)}</span>
               <input
                 class="input value"
+                data-setting-search-id={`appearance-token-${token.key}`}
                 {value}
                 spellcheck="false"
                 aria-label={tr(`settings.token_${token.key}`)}
@@ -511,7 +521,7 @@
 <section class="block">
   <div class="block-head">
     <div>
-      <h3>{tr("settings.css_extensions")}</h3>
+      <h3 data-setting-search-id="appearance-css" tabindex="-1">{tr("settings.css_extensions")}</h3>
       <p class="hint">
         {tr("settings.css_hint")}
       </p>

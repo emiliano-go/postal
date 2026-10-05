@@ -90,7 +90,7 @@
 </script>
 
 <section class="sticker-sync" aria-label={t("content.sticker_sync")}>
-  <button disabled={!account || !connected || busy || loading} onclick={resync}>{busy ? t("content.resyncing_stickers") : t("content.resync_known_stickers")}</button>
+  <button data-setting-search-id="media-stickers" disabled={!account || !connected || busy || loading} onclick={resync}>{busy ? t("content.resyncing_stickers") : t("content.resync_known_stickers")}</button>
   <p class="muted">{t("content.refreshes_known_shared_packs_favorites_and_recents")}</p>
   {#if !account || !connected}<p class="muted" role="status">{t("content.connect_this_account_to_resync_cached_data_stays_available")}</p>{/if}
   {#if loading}<p role="status">{t("content.loading_cached_sticker_library")}</p>{/if}

@@ -13,6 +13,7 @@ const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 mod chats;
 mod schema;
+mod search_index;
 mod marks;
 pub(crate) mod broadcast_lists;
 pub use broadcast_lists::BroadcastList;
@@ -633,14 +634,17 @@ impl MessageStore {
         // instead of through a full VACUUM. Switching an existing file over
         // takes one VACUUM, done here before anything else touches the store.
         let auto_vacuum: i64 = conn.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
-        if auto_vacuum != 2 {
+        let vacuumed = auto_vacuum != 2;
+        if vacuumed {
             let started = std::time::Instant::now();
             conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
             conn.execute_batch("VACUUM")?;
             log::info!("message store switched to incremental vacuum in {:?}", started.elapsed());
         }
         let started = std::time::Instant::now();
+        let indexed_before_migrate = search_index::table_exists(&conn)?;
         schema::migrate(&conn)?;
+        search_index::on_open(&conn, vacuumed && indexed_before_migrate)?;
         // Heals version-stamped files missing the newest columns; no-op otherwise.
         schema::ensure_optional_columns(&conn)?;
         let schema_elapsed = started.elapsed();

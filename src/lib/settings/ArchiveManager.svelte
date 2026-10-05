@@ -32,17 +32,17 @@
 </script>
 
 <details class="archives" ontoggle={loadChats}>
-  <summary><span>{t("settings.archive_title")}</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
+  <summary data-setting-search-id="privacy-archive"><span>{t("settings.archive_title")}</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
   <p>{t("settings.archive_hint")}</p>
   <label>{t("settings.archive_scope")}
-    <select bind:value={chat} disabled={busy}>
+    <select data-setting-search-id="privacy-archive-scope" bind:value={chat} disabled={busy}>
       <option value="">{t("settings.archive_whole")}</option>
       {#each chats as item (item.chat)}<option value={item.chat}>{members.displayName(item.display_name, item.chat)}</option>{/each}
     </select>
   </label>
   <div class="actions">
-    <button class="button" disabled={busy} onclick={() => run(false)}>{chat ? t("settings.archive_export") : t("settings.archive_backup")}</button>
-    <button class="button" disabled={busy} onclick={() => run(true)}>{t("settings.archive_restore")}</button>
+    <button class="button" data-setting-search-id="privacy-archive-export" disabled={busy} onclick={() => run(false)}>{chat ? t("settings.archive_export") : t("settings.archive_backup")}</button>
+    <button class="button" data-setting-search-id="privacy-archive-restore" disabled={busy} onclick={() => run(true)}>{t("settings.archive_restore")}</button>
   </div>
   <p>{t("settings.archive_private_hint")}</p>
   {#if busy}<p role="status">{t("ui.working")}</p>{/if}

@@ -7,6 +7,7 @@
   import { labelSearch } from "$lib/utils/label-search";
   import { act, canDeleteForEveryone, canDeletePickedForEveryone, copyMessages, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, reactMessages, saveEvent, starMessages, target, viewableMessages } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
+  import { settingsSearchShortcut } from "$lib/utils/settings-search";
   import { invoke } from "$lib/utils/ipc";
   import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { uiError, uiMessage } from "$lib/state/localized";
@@ -1276,6 +1277,7 @@
     // clicking the field first.
     const onAnyKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || helpOpen) return;
+      if (ui.showSettings && settingsSearchShortcut(event)) return;
       const helpTarget = event.target as HTMLElement | null;
       if (helpShortcut(event, accessibility.charShortcutsEnabled,
         !!helpTarget?.closest?.("input, textarea, select, [contenteditable], [role=dialog], dialog"))) {

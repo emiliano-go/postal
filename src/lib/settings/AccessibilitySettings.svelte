@@ -33,7 +33,7 @@
     {/if}
   </div>
   <label class="mode-switch">
-    <input class="switch" type="checkbox" checked={accessibility.enabled} onchange={(e) => setMode(e.currentTarget.checked)} />
+    <input class="switch" data-setting-search-id="accessibility-mode" type="checkbox" checked={accessibility.enabled} onchange={(e) => setMode(e.currentTarget.checked)} />
     <span>{accessibility.enabled ? t("settings.a11y.on") : t("settings.a11y.off")}</span>
   </label>
 </div>
@@ -44,7 +44,7 @@
     <span class="setting-title">{t("settings.a11y.reduce_motion")}</span>
     <span class="setting-desc">{t("settings.a11y.reduce_motion_hint")}</span>
   </div>
-  <select class="field" value={accessibility.reduceMotion} onchange={(e) => { accessibility.reduceMotion = e.currentTarget.value as TriState; persist(); }} aria-label={t("settings.a11y.reduce_motion")}>
+  <select class="field" data-setting-search-id="accessibility-reduce-motion" value={accessibility.reduceMotion} onchange={(e) => { accessibility.reduceMotion = e.currentTarget.value as TriState; persist(); }} aria-label={t("settings.a11y.reduce_motion")}>
     <option value="off">{t("settings.a11y.off")}</option>
     <option value="on">{t("settings.a11y.on")}</option>
     <option value="system">{t("settings.a11y.system_follow")}</option>
@@ -56,7 +56,7 @@
     <span class="setting-title">{t("settings.a11y.pause_media")}</span>
     <span class="setting-desc">{t("settings.a11y.pause_media_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.pauseAnimatedMedia} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-pause-media" type="checkbox" bind:checked={accessibility.pauseAnimatedMedia} onchange={persist} />
 </label>
 
 <h3>{t("settings.a11y.visual_group")}</h3>
@@ -65,7 +65,7 @@
     <span class="setting-title">{t("settings.a11y.high_contrast")}</span>
     <span class="setting-desc">{t("settings.a11y.high_contrast_hint")}</span>
   </div>
-  <select class="field" value={accessibility.highContrast} onchange={(e) => { accessibility.highContrast = e.currentTarget.value as TriState; persist(); }} aria-label={t("settings.a11y.high_contrast")}>
+  <select class="field" data-setting-search-id="accessibility-high-contrast" value={accessibility.highContrast} onchange={(e) => { accessibility.highContrast = e.currentTarget.value as TriState; persist(); }} aria-label={t("settings.a11y.high_contrast")}>
     <option value="off">{t("settings.a11y.off")}</option>
     <option value="on">{t("settings.a11y.on")}</option>
     <option value="system">{t("settings.a11y.system_follow")}</option>
@@ -76,7 +76,7 @@
     <span class="setting-title">{t("settings.a11y.reduce_transparency")}</span>
     <span class="setting-desc">{t("settings.a11y.reduce_transparency_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.reduceTransparency} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-transparency" type="checkbox" bind:checked={accessibility.reduceTransparency} onchange={persist} />
 </label>
 <div class="setting">
   <div>
@@ -84,7 +84,7 @@
     <span class="setting-desc">{t("settings.a11y.target_size_hint")}</span>
   </div>
   <div class="segmented" role="radiogroup" aria-label={t("settings.a11y.target_size")}>
-    <button role="radio" aria-checked={accessibility.targetSize === "comfortable"} class:active={accessibility.targetSize === "comfortable"} onclick={() => { accessibility.targetSize = "comfortable"; persist(); }}>{t("settings.a11y.comfortable")}</button>
+    <button role="radio" data-setting-search-id="accessibility-target-size" aria-checked={accessibility.targetSize === "comfortable"} class:active={accessibility.targetSize === "comfortable"} onclick={() => { accessibility.targetSize = "comfortable"; persist(); }}>{t("settings.a11y.comfortable")}</button>
     <button role="radio" aria-checked={accessibility.targetSize === "large"} class:active={accessibility.targetSize === "large"} onclick={() => { accessibility.targetSize = "large"; persist(); }}>{t("settings.a11y.large")}</button>
   </div>
 </div>
@@ -93,21 +93,21 @@
     <span class="setting-title">{t("settings.a11y.always_focus")}</span>
     <span class="setting-desc">{t("settings.a11y.always_focus_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.alwaysShowFocus} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-always-focus" type="checkbox" bind:checked={accessibility.alwaysShowFocus} onchange={persist} />
 </label>
 <label class="setting">
   <div>
     <span class="setting-title">{t("settings.a11y.enhanced_focus")}</span>
     <span class="setting-desc">{t("settings.a11y.enhanced_focus_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.enhancedFocus} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-enhanced-focus" type="checkbox" bind:checked={accessibility.enhancedFocus} onchange={persist} />
 </label>
 <label class="setting">
   <div>
     <span class="setting-title">{t("settings.a11y.color_blind")}</span>
     <span class="setting-desc">{t("settings.a11y.color_blind_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.colorBlindPalette} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-color-blind" type="checkbox" bind:checked={accessibility.colorBlindPalette} onchange={persist} />
 </label>
 
 <h3>{t("settings.a11y.text_group")}</h3>
@@ -117,7 +117,7 @@
     <span class="setting-desc">{t("settings.a11y.text_size_hint")}</span>
   </div>
   <span class="unit-field">
-    <input type="range" min="100" max="200" step="5" value={accessibility.textScale} aria-label={t("settings.a11y.text_size")}
+    <input type="range" data-setting-search-id="accessibility-text-size" min="100" max="200" step="5" value={accessibility.textScale} aria-label={t("settings.a11y.text_size")}
       oninput={(e) => { accessibility.textScale = Number(e.currentTarget.value); persist(); }} />
     <span class="readout" aria-live="off">{accessibility.textScale}%</span>
   </span>
@@ -127,7 +127,7 @@
     <span class="setting-title">{t("settings.a11y.text_spacing")}</span>
     <span class="setting-desc">{t("settings.a11y.text_spacing_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.textSpacing} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-text-spacing" type="checkbox" bind:checked={accessibility.textSpacing} onchange={persist} />
 </label>
 <div class="setting">
   <div>
@@ -135,7 +135,7 @@
     <span class="setting-desc">{t("settings.a11y.font_choice_hint")}</span>
   </div>
   <div class="segmented" role="radiogroup" aria-label={t("settings.a11y.font_choice")}>
-    <button role="radio" aria-checked={accessibility.fontChoice === "system"} class:active={accessibility.fontChoice === "system"} onclick={() => { accessibility.fontChoice = "system"; persist(); }}>{t("settings.a11y.font_system")}</button>
+    <button role="radio" data-setting-search-id="accessibility-font" aria-checked={accessibility.fontChoice === "system"} class:active={accessibility.fontChoice === "system"} onclick={() => { accessibility.fontChoice = "system"; persist(); }}>{t("settings.a11y.font_system")}</button>
     <button role="radio" aria-checked={accessibility.fontChoice === "legible"} class:active={accessibility.fontChoice === "legible"} onclick={() => { accessibility.fontChoice = "legible"; persist(); }}>{t("settings.a11y.font_legible")}</button>
   </div>
 </div>
@@ -146,14 +146,14 @@
     <span class="setting-title">{t("settings.a11y.shortcut_hints")}</span>
     <span class="setting-desc">{t("settings.a11y.shortcut_hints_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.showShortcutHints} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-shortcut-hints" type="checkbox" bind:checked={accessibility.showShortcutHints} onchange={persist} />
 </label>
 <label class="setting">
   <div>
     <span class="setting-title">{t("settings.a11y.char_shortcuts")}</span>
     <span class="setting-desc">{t("settings.a11y.char_shortcuts_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.charShortcutsEnabled} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-char-shortcuts" type="checkbox" bind:checked={accessibility.charShortcutsEnabled} onchange={persist} />
 </label>
 <div class="setting">
   <div>
@@ -168,7 +168,7 @@
     <span class="setting-title">{t("settings.a11y.announcements")}</span>
     <span class="setting-desc">{t("settings.a11y.announcements_hint")}</span>
   </div>
-  <select class="field" value={accessibility.announcements} onchange={(e) => { accessibility.announcements = e.currentTarget.value as typeof accessibility.announcements; persist(); }} aria-label={t("settings.a11y.announcements")}>
+  <select class="field" data-setting-search-id="accessibility-announcements" value={accessibility.announcements} onchange={(e) => { accessibility.announcements = e.currentTarget.value as typeof accessibility.announcements; persist(); }} aria-label={t("settings.a11y.announcements")}>
     <option value="off">{t("settings.a11y.announce_off")}</option>
     <option value="concise">{t("settings.a11y.announce_concise")}</option>
     <option value="detailed">{t("settings.a11y.announce_detailed")}</option>
@@ -182,7 +182,7 @@
     <span class="setting-title">{t("settings.a11y.autoplay")}</span>
     <span class="setting-desc">{t("settings.a11y.autoplay_hint")}</span>
   </div>
-  <input class="switch" type="checkbox" bind:checked={accessibility.autoplayVideos} onchange={persist} />
+  <input class="switch" data-setting-search-id="accessibility-autoplay" type="checkbox" bind:checked={accessibility.autoplayVideos} onchange={persist} />
 </label>
 
 <style>

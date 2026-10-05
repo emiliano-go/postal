@@ -87,6 +87,12 @@ fn database_encryption_export_is_plaintext_and_restore_encrypts_from_first_write
     crate::store::archive::restore_backup_with_key(&backup, &restored, &restored_media, Some(&key)).unwrap();
     let store = MessageStore::open_with_key(&restored.join("messages.db"), Some(&key)).unwrap();
     assert_eq!(store.message("synthetic@s", "encrypted-row").unwrap().text, message().text);
+    assert_eq!(store.search_messages("synthetic@s", "PRIVATE_ARCHIVE", 10).unwrap()[0].header.id, "encrypted-row");
+    store.with_test_connection(|conn| {
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM message_search WHERE text LIKE '%PRIVATE_ARCHIVE%'", [],
+            |row| row.get::<_, i64>(0))?, 1);
+        Ok(())
+    }).unwrap();
     drop(store);
     for name in ["messages.db", "aliases.db"] { assert_encrypted(&restored.join(name), &key); }
 }

@@ -90,6 +90,7 @@ impl MessageStore {
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").to_lowercase();
         let pattern = format!("%{escaped}%");
         let conn = self.conn.lock().unwrap();
+        let (fts_clause, fts_pattern) = search_index::clause(&conn, query, 5, true)?;
         let chat = chat.map(|chat| names::canonical_chat(&conn, chat).map(|chat| chat.to_string())).transpose()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages m LEFT JOIN names n ON n.jid = m.sender
@@ -103,9 +104,10 @@ impl MessageStore {
                      AND l.deleted = 0 AND l.name <> '' AND a.label_id IN (SELECT value FROM json_each(?1)))
                AND (?2 IS NULL OR m.chat = ?2)
                AND (lower(m.text) LIKE ?3 ESCAPE '\\' OR lower(m.link_urls) LIKE ?3 ESCAPE '\\')
+               {fts_clause}
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC, m.chat ASC LIMIT ?4"
         ))?;
-        let rows = stmt.query_map(params![ids, chat, pattern, limit.clamp(1, 500)], message_row)?;
+        let rows = stmt.query_map(params![ids, chat, pattern, limit.clamp(1, 500), fts_pattern], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 

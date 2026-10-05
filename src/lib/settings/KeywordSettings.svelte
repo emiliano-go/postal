@@ -30,8 +30,8 @@
 <p>{t("settings.keywords_hint")}</p>
 <p>{t("settings.keywords_priority")}</p>
 <fieldset disabled={!account}>
-  <label>{t("settings.keywords_highlight")}<textarea dir="auto" rows="5" bind:value={highlight} oninput={() => { saved = false; }}></textarea></label>
-  <label>{t("settings.keywords_hide")}<textarea dir="auto" rows="5" bind:value={hide} oninput={() => { saved = false; }}></textarea></label>
+  <label>{t("settings.keywords_highlight")}<textarea data-setting-search-id="chat-keyword-highlight" dir="auto" rows="5" bind:value={highlight} oninput={() => { saved = false; }}></textarea></label>
+  <label>{t("settings.keywords_hide")}<textarea data-setting-search-id="chat-keyword-hide" dir="auto" rows="5" bind:value={hide} oninput={() => { saved = false; }}></textarea></label>
   <Button variant="primary" disabled={!dirty && !keywords.error} onclick={save}>{saved ? t("ui.saved") : t("settings.keywords_save")}</Button>
 </fieldset>
 {#if !account}<p role="status">{t("settings.keywords_select_account")}</p>{/if}

@@ -565,11 +565,13 @@ impl<'a> Resolver<'a> {
             .unwrap_or_else(|| if chat.is_some() { query } else { query.trim_matches(query_whitespace) });
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").to_lowercase();
         let pattern = format!("%{escaped}%");
+        let (fts_clause, fts_pattern) = search_index::clause(self.conn, query, 4, true)?;
         let sql = format!("SELECT DISTINCT m.chat FROM messages m WHERE ({PUBLIC_CONTENT}) AND m.system_kind IS NULL
             AND (?1 IS NULL OR m.chat=?1) AND (lower(m.text) LIKE ?2 ESCAPE '\\' OR lower(m.link_urls) LIKE ?2 ESCAPE '\\')
+            {fts_clause}
             AND (?3 IS NULL OR EXISTS(SELECT 1 FROM message_labels a WHERE a.chat=m.chat AND a.message_id=m.id
                 AND a.labeled=1 AND a.label_id IN (SELECT value FROM json_each(?3))))");
-        Ok((strings(self.conn, &sql, params![chat, pattern, label_ids])?, None))
+        Ok((strings(self.conn, &sql, params![chat, pattern, label_ids, fts_pattern])?, None))
     }
 
     fn inbox(&self, filters: &SpaceInboxFilters) -> Result<(Vec<String>, Option<String>)> {

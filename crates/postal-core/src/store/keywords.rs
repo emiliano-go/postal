@@ -57,11 +57,12 @@ impl MessageStore {
             return Ok(counts);
         }
         let conn = self.conn.lock().unwrap();
+        let (candidate_clause, patterns) = search_index::keyword_clause(&conn, &highlight, 1)?;
         let mut stmt = conn.prepare_cached(&format!(
             "SELECT m.chat, m.text, m.media_kind FROM messages m
-            WHERE {ELIGIBLE_SQL} AND m.read = 0 AND m.mentioned = 0"
+            WHERE {ELIGIBLE_SQL} AND m.read = 0 AND m.mentioned = 0 {candidate_clause}"
         ))?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map(rusqlite::params_from_iter(patterns.iter()), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -93,13 +94,17 @@ impl MessageStore {
         let chat = chat
             .map(|chat| names::canonical_chat(&conn, chat).map(|chat| chat.to_string()))
             .transpose()?;
+        let (candidate_clause, patterns) = search_index::keyword_clause(&conn, &highlight, 3)?;
         let mut stmt = conn.prepare_cached(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages m
             LEFT JOIN names n ON n.jid = m.sender WHERE {ELIGIBLE_SQL}
               AND (?1 IS NULL OR m.chat = ?1) AND (?2 = 0 OR m.read = 0)
+              {candidate_clause}
             ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC, m.chat ASC"
         ))?;
-        let rows = stmt.query_map(params![chat, unread_only], message_row)?;
+        let mut values: Vec<&dyn rusqlite::ToSql> = vec![&chat, &unread_only];
+        values.extend(patterns.iter().map(|pattern| pattern as &dyn rusqlite::ToSql));
+        let rows = stmt.query_map(rusqlite::params_from_iter(values), message_row)?;
         for row in rows {
             let message = row?;
             if keyword_hit(

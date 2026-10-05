@@ -419,6 +419,7 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::call_history::migrate,
     migrate_generated_system,
     migrate_download_error,
+    super::search_index::ensure,
 ];
 
 fn migrate_generated_system(conn: &Connection) -> Result<()> {

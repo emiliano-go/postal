@@ -88,7 +88,8 @@ impl Attachments {
 }
 
 fn names(conn: &Connection) -> Result<Vec<String>> {
-    Ok(conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")?
+    Ok(conn.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table'
+            AND name NOT LIKE 'sqlite_%' ORDER BY name")?
         .query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?)
 }
 
