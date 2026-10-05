@@ -7,6 +7,8 @@ export const windowFixture = {
 };
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
 export const pluginFixture = { enabled: false, failure: false, crashed: false };
+export const storeFixture = { corrupt: true, failure: false, healthCalls: 0, recoveryCalls: 0,
+  deferNext: false, pending: [] as (() => void)[] };
 export const sendFixture = { before: null as ((command: string, args?: Record<string, unknown>) => Promise<void>) | null };
 export const historyFixture = {
   enabled: true, delayNext: false, pending: [] as (() => void)[],
@@ -44,6 +46,23 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   previewFixture.calls.push(command);
+  if (command === "message_store_health") {
+    storeFixture.healthCalls++;
+    const health = { status: storeFixture.corrupt ? "corrupt" : "healthy", path: "synthetic/messages.db",
+      diagnosis: storeFixture.corrupt ? "Synthetic corrupted page" : null };
+    if (storeFixture.deferNext) {
+      storeFixture.deferNext = false;
+      return new Promise<T>((resolve) => storeFixture.pending.push(() => resolve(health as T)));
+    }
+    return health as T;
+  }
+  if (command === "recover_message_store") {
+    storeFixture.recoveryCalls++;
+    if (args?.account !== "settings-fixture") throw { kind: "postal_error", code: "error.unknown_account", params: {} };
+    if (storeFixture.failure) throw { kind: "postal_error", code: "error.message_store_recovery_failed", params: {}, diagnostic: "Synthetic rename failure; original files retained" };
+    storeFixture.corrupt = false;
+    return { preserved_directory: "synthetic/recovery-preserved", restart_diagnostic: null } as T;
+  }
   if (command === "group_history_offer") {
     historyFixture.offers.push({ chat: args?.chat, account: args?.account });
     const offer = { enabled: historyFixture.enabled, reason: historyFixture.enabled ? null : "WhatsApp disabled group history.", max_messages: 100, time_window_seconds: 7 * 86400 };

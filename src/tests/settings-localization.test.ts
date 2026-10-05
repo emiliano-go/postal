@@ -95,7 +95,7 @@ test("Settings preserves locale/encryption controls and command contracts with l
   assert.ok(source.includes('bind:checked={draft.encrypt_databases}'));
   assert.ok(source.includes('locale.setPreference(event.currentTarget.value as LocalePreference)'));
   const commands = [...new Set([...source.matchAll(/invoke(?:<[^\n]+?>)?\("([^"]+)"/g)].map((match) => match[1]))].sort();
-  assert.deepEqual(commands, ["backfill_history", "database_encryption_status", "get_desktop_status", "open_log", "profile", "resync_stickers", "set_about", "set_privacy", "set_profile_picture", "set_push_name", "sticker_library"].sort());
+  assert.deepEqual(commands, ["backfill_history", "database_encryption_status", "get_desktop_status", "message_store_health", "open_log", "profile", "recover_message_store", "resync_stickers", "set_about", "set_privacy", "set_profile_picture", "set_push_name", "sticker_library"].sort());
   assert.ok(source.includes('<bdi dir="auto">{account.label}</bdi>'));
   assert.ok(source.includes('<bdi dir="ltr">{number}</bdi>'));
   for (const text of [source, source.replace(/\r?\n/g, "\r\n")]) {

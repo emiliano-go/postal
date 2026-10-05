@@ -26,8 +26,9 @@
   import { transcription } from "$lib/state/transcription.svelte";
   import Transcript from "$lib/messages/Transcript.svelte";
   import { mediaAltText } from "$lib/utils/accessibility.svelte";
+  import { messageRailId } from "$lib/utils/message-rail";
 
-  let { message, vm, api, albumCell = false }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi; albumCell?: boolean } = $props();
+  let { message, vm, api, albumCell = false, keyboardFocused = false, keyboardLabel }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi; albumCell?: boolean; keyboardFocused?: boolean; keyboardLabel?: string } = $props();
 
   /** A sticker file the renderer cannot draw, such as a Lottie sticker. */
   let stickerBroken = $state(false);
@@ -82,6 +83,10 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="msg-row"
+  id={messageRailId(message.id)}
+  role="article"
+  aria-label={keyboardLabel}
+  class:keyboard-focused={keyboardFocused}
   class:album-cell={albumCell}
   class:replying={vm.isReplying}
   class:jumped={vm.highlighted}
@@ -461,6 +466,7 @@
     padding: 1px var(--pad-l) 1px var(--pad-r);
     transition: background-color calc(0.15s * var(--motion-scale)) var(--ease);
   }
+  .msg-row.keyboard-focused { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
   .msg-row.album-cell { padding: 0; min-width: 0; height: 100%; }
   .album-cell .bubble { width: 100%; max-width: 100%; box-sizing: border-box; height: 100%; margin-top: 0; }
   .album-cell .bubble::before, .album-cell .sender-avatar { display: none; }

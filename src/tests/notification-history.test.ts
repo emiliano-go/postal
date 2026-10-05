@@ -164,7 +164,12 @@ function producer() {
   const rules = { highlight: [] as string[], hide: [] as string[] };
   const keywords = { account: "account-a", hidden: (message: StoredMessage) => keywordHidden(message, rules) };
   const attempts: { title: string; body: string; chat: string; account: string; current: () => boolean; historyCount: number }[] = [];
-  let invoke: (...args: unknown[]) => Promise<unknown> = async () => { throw new Error("missing row"); };
+  let storedMute: number | null = null;
+  let storedAtAll = false;
+  let invoke: (...args: unknown[]) => Promise<unknown> = async (command) => {
+    if (command === "chat_settings") return { muted_until: storedMute ?? chats.chats[0]?.muted_until ?? 0, mute_at_all: storedAtAll };
+    throw new Error("missing row");
+  };
   const source = readFileSync(new URL("../lib/state/events.ts", import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
     .replace(/^import[\s\S]*?from\s+["'][^"']+["'];?\s*/gm, "").replace(/^export /gm, "");
@@ -178,12 +183,15 @@ function producer() {
       return Promise.resolve();
     },
   };
-  const functions = new Function(...Object.keys(bindings), `${compiled}\nreturn { notifyForMessage, notifyForHint };`)(...Object.values(bindings)) as {
-    notifyForMessage: (message: StoredMessage, fresh: boolean) => void;
-    notifyForHint: (chat: string, id: string, fresh: boolean) => Promise<void>;
+  const functions = new Function(...Object.keys(bindings), `${compiled}\nreturn { notifyForMessage, notifyForHint, queueNotification };`)(...Object.values(bindings)) as {
+    notifyForMessage: (message: StoredMessage, fresh: boolean, mute?: { mutedUntil: number; muteAtAll: boolean }, scope?: { account: string; generation: number }) => Promise<void>;
+    notifyForHint: (chat: string, id: string, fresh: boolean, scope?: { account: string; generation: number }) => Promise<void>;
+    queueNotification: (work: (scope: { account: string; generation: number }) => Promise<void>) => void;
   };
   return { ...functions, storage, history, session, messages, chats, rules, keywords, attempts,
-    setInvoke(handler: typeof invoke) { invoke = handler; } };
+    setInvoke(handler: typeof invoke) { invoke = (command, ...args) => command === "chat_settings"
+      ? Promise.resolve({ muted_until: storedMute ?? chats.chats[0]?.muted_until ?? 0, mute_at_all: storedAtAll }) : handler(command, ...args); },
+    setStoredMute(until: number, atAll = false) { storedMute = until; storedAtAll = atAll; } };
 }
 
 function incoming(overrides: Partial<StoredMessage> = {}): StoredMessage {
@@ -192,11 +200,11 @@ function incoming(overrides: Partial<StoredMessage> = {}): StoredMessage {
     spoiler: false, text: "Hello", sender_name: "Ana", ...overrides } as StoredMessage;
 }
 
-test("verified notifications enter history before the OS attempt with safe previews and event time", () => {
+test("verified notifications enter history before the OS attempt with safe previews and event time", async () => {
   for (const message of [incoming(), incoming({ spoiler: true, text: "SPOILER_SECRET" }),
     incoming({ media_kind: "image", media_once_kind: "image", text: "KEPT_VIEW_ONCE_SECRET" })]) {
     const fixture = producer(), before = Date.now();
-    fixture.notifyForMessage(message, true);
+    await fixture.notifyForMessage(message, true);
     const row = get(fixture.history).entries[0];
     assert.equal(fixture.attempts[0].historyCount, 1);
     assert.equal("account" in row, false);
@@ -210,13 +218,13 @@ test("verified notifications enter history before the OS attempt with safe previ
   }
 });
 
-test("notification history producer shares eligibility and keyword/account guards", () => {
+test("notification history producer shares eligibility and keyword/account guards", async () => {
   for (const overrides of [
     { deleted: true }, { revoked: true }, { from_me: true }, { timestamp: Math.floor(Date.now() / 1000) - 301 },
     { system_kind: "UNAVAILABLE_MESSAGE" }, { system_kind: "SILENCED_UNKNOWN_CALLER_VOICE" }, { text: "hide this" },
   ] as Partial<StoredMessage>[]) {
     const fixture = producer(); fixture.rules.hide = ["hide"];
-    fixture.notifyForMessage(incoming(overrides), true);
+    await fixture.notifyForMessage(incoming(overrides), true);
     assert.deepEqual(get(fixture.history).entries, []); assert.deepEqual(fixture.attempts, []);
   }
   for (const change of [
@@ -225,13 +233,56 @@ test("notification history producer shares eligibility and keyword/account guard
     (fixture: ReturnType<typeof producer>) => { fixture.chats.chats[0].muted_until = -1; },
     (fixture: ReturnType<typeof producer>) => { fixture.keywords.account = "account-b"; },
   ]) {
-    const fixture = producer(); change(fixture); fixture.notifyForMessage(incoming(), true);
+    const fixture = producer(); change(fixture); await fixture.notifyForMessage(incoming(), true);
     assert.deepEqual(get(fixture.history).entries, []); assert.deepEqual(fixture.attempts, []);
   }
-  const fixture = producer(); fixture.notifyForMessage(incoming(), false);
+  const fixture = producer(); await fixture.notifyForMessage(incoming(), false);
   assert.deepEqual(get(fixture.history).entries, []);
-  fixture.notifyForMessage(incoming(), true); fixture.rules.hide = ["hello"];
+  await fixture.notifyForMessage(incoming(), true); fixture.rules.hide = ["hello"];
   assert.equal(fixture.attempts[0].current(), false);
+});
+
+test("stored mute wins over a stale loaded summary", async () => {
+  const fixture = producer();
+  fixture.setStoredMute(-1);
+  await fixture.notifyForMessage(incoming(), true);
+  assert.deepEqual(fixture.attempts, []);
+  fixture.setStoredMute(0, true);
+  await fixture.notifyForMessage(incoming({ mentioned_all_only: true }), true);
+  assert.deepEqual(fixture.attempts, []);
+});
+
+test("an old account notification lookup cannot delay the new account queue", async () => {
+  const fixture = producer();
+  let finishOld!: () => void, newStarted = false;
+  fixture.queueNotification(() => new Promise<void>((resolve) => { finishOld = resolve; }));
+  await new Promise((resolve) => setImmediate(resolve));
+  fixture.queueNotification((scope) => fixture.notifyForMessage(incoming(), true, undefined, scope));
+  fixture.session.activeAccount = "account-b";
+  fixture.keywords.account = "account-b";
+  fixture.messages.accountGeneration++;
+  fixture.queueNotification(async () => { newStarted = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(newStarted, true);
+  finishOld();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fixture.attempts, []);
+  assert.deepEqual(get(fixture.history).entries, []);
+});
+
+test("a mute during hint message lookup suppresses verified and generic notifications", async () => {
+  for (const messages of [[incoming()], []]) {
+    const fixture = producer();
+    let finish!: (page: unknown) => void;
+    fixture.setInvoke(() => new Promise((resolve) => { finish = resolve; }));
+    const waiting = fixture.notifyForHint("room@g.us", "notification", true);
+    await new Promise((resolve) => setImmediate(resolve));
+    fixture.setStoredMute(-1);
+    finish({ messages });
+    await waiting;
+    assert.deepEqual(fixture.attempts, []);
+    assert.deepEqual(get(fixture.history).entries, []);
+  }
 });
 
 test("hint fallback stays generic without history and a stale verified hint cannot cross accounts", async () => {
@@ -241,6 +292,7 @@ test("hint fallback stays generic without history and a stale verified hint cann
   const stale = producer(); let finish!: (page: unknown) => void;
   stale.setInvoke(() => new Promise((resolve) => { finish = resolve; }));
   const waiting = stale.notifyForHint("room@g.us", "notification", true);
+  await new Promise((resolve) => setImmediate(resolve));
   stale.session.activeAccount = "account-b"; stale.keywords.account = "account-b"; stale.messages.accountGeneration++;
   finish({ messages: [incoming()] }); await waiting;
   assert.deepEqual(get(stale.history).entries, []); assert.deepEqual(stale.attempts, []);

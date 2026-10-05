@@ -2,16 +2,17 @@
   import { onMount } from "svelte";
   import Settings, { type Section, type UiSettings } from "$lib/settings/Settings.svelte";
   import { session } from "$lib/state/session.svelte";
-  import { previewFixture } from "./ipc";
+  import { previewFixture, storeFixture } from "./ipc";
   let open = $state(true);
   let paired = $state(false);
   let section = $state<Section>("accounts");
   let settings = $state<UiSettings>(structuredClone($state.snapshot(session.settings)));
   let focused = $state("none");
   let calls = $state("");
+  let recoveries = $state(0);
   const noop = () => {};
   onMount(() => {
-    const timer = setInterval(() => (calls = previewFixture.calls.join(", ")), 100);
+    const timer = setInterval(() => { calls = previewFixture.calls.join(", "); recoveries = storeFixture.recoveryCalls; }, 100);
     return () => clearInterval(timer);
   });
 </script>
@@ -24,11 +25,15 @@
   <h1>Settings search fixture</h1>
   <button onclick={() => { section = "accounts"; open = true; }}>Open settings</button>
   <label><input type="checkbox" bind:checked={paired} /> Paired sections</label>
+  <label><input type="checkbox" onchange={(event) => (storeFixture.failure = event.currentTarget.checked)} /> Fail recovery</label>
+  <button onclick={() => (storeFixture.deferNext = true)}>Delay next health probe</button>
+  <button onclick={() => { storeFixture.pending.splice(0).forEach((finish) => finish()); }}>Resolve health probe</button>
 </header>
 <aside>
   <output aria-label="Selected section">{section}</output>
   <output aria-label="Focused setting">{focused}</output>
   <output aria-label="Native calls">{calls || "none"}</output>
+  <output aria-label="Recovery calls">{recoveries}</output>
 </aside>
 
 {#if open}

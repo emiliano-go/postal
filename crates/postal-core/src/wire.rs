@@ -18,7 +18,7 @@ pub fn visit_wire_types(visitor: &mut impl TypeVisitor) {
         crate::service::GroupSettings, crate::service::GroupSettingChange,
         crate::service::BooleanProp, crate::service::StickerLibrary, crate::service::StickerResyncReport,
         crate::service::StorageReport, crate::service::StorageCleanup, crate::service::StorageOrder,
-        crate::service::CleanupResult, crate::store::StoredMessage, crate::store::ChatSummary,
+        crate::service::CleanupResult, crate::store::StoredMessage, crate::store::ChatSummary, crate::store::ChatPage,
         crate::service::AlbumSendResult,
         crate::store::MessageReceipt, crate::store::ChatRetention, crate::store::DiskRetention,
         crate::store::MessageCursor, crate::store::MessagePage, crate::store::MessagePageDirection,

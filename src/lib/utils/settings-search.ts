@@ -103,6 +103,7 @@ export const SETTING_SEARCH_FIELDS: readonly SettingSearchDefinition[] = [
   { id: "accessibility-announcements", section: "accessibility", titleKey: "settings.a11y.announcements", descriptionKey: "settings.a11y.announcements_hint" },
   { id: "accessibility-autoplay", section: "accessibility", titleKey: "settings.a11y.autoplay", descriptionKey: "settings.a11y.autoplay_hint" },
   { id: "advanced-verbose-logs", section: "advanced", titleKey: "settings.main.verbose_logs", descriptionKey: "settings.main.verbose_logs_hint" },
+  { id: "about-store-health", section: "about", titleKey: "settings.store_title", descriptionKey: "settings.store_recovery_hint" },
 ] as const;
 
 export function dynamicSettingSearchFields(input: {

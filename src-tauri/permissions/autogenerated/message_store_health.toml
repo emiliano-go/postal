@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-message-store-health"
+description = "Enables the message_store_health command without any pre-configured scope."
+commands.allow = ["message_store_health"]
+
+[[permission]]
+identifier = "deny-message-store-health"
+description = "Denies the message_store_health command without any pre-configured scope."
+commands.deny = ["message_store_health"]

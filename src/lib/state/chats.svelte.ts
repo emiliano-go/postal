@@ -2,7 +2,7 @@
 // the group-info panel. Moved out of +page.svelte. Reads members (names) and
 // session (self, accounts); cross-domain flows (openChat) stay in the route.
 import { invoke } from "$lib/utils/ipc";
-import { favorites } from "./favorites.svelte";
+import type { ChatPage } from "$lib/utils/wire";
 import { mergeSummaries } from "$lib/utils/chat-list";
 import { plain } from "$lib/utils/format";
 import { bare, MEDIA_LABELS } from "$lib/utils/message";
@@ -25,8 +25,18 @@ function bareJid(jid: string) {
 }
 
 export class ChatsState {
-  /** The list, replaced wholesale on refresh; raw to avoid proxy overhead. */
+  /** Summaries seen in loaded pages or on-demand whole-account views. */
   chats: ChatSummary[] = $state.raw([]);
+  sidebarRows: ChatSummary[] = $state.raw([]);
+  sidebarCursor = $state<string | null>(null);
+  sidebarLoading = $state(false);
+  sidebarTotals = $state.raw({ archived: 0, unreadChats: 0, unreadMentions: 0, desktopUnread: 0 });
+  private sidebarAllowed: string[] | null = null;
+  private sidebarOrderAllowed = false;
+  private sidebarIncludeArchived = false;
+  private sidebarScope = "";
+  private pageSeq = 0;
+  private summarySeq = 0;
   /** Chat list only: cheap, local, never blocks on the network. */
   chatsSeq = 0;
   selectedChat = $state<string | null>(null);
@@ -60,22 +70,9 @@ export class ChatsState {
 
   /** Coalesces an event burst into at most one chat-list reload per 200 ms. */
 
-  visibleChats = $derived(
-    this.chatFilter === "favorites" ? favorites.rows(this.chats) : this.chats.filter((c) =>
-      this.chatFilter === "archived"
-        ? c.archived
-        : c.archived
-          ? false
-          : this.chatFilter === "all"
-            ? true
-            : this.chatFilter === "unread"
-              ? c.unread_count > 0 || c.marked_unread
-              : c.chat.endsWith("@g.us"),
-    ),
-  );
-  archivedChats = $derived(this.chats.filter((c) => c.archived).length);
-  unreadChats = $derived(this.chats.filter((c) => !c.archived && (c.unread_count > 0 || c.marked_unread)).length);
-  unreadPings = $derived(this.chats.reduce((n, c) => n + c.mention_count, 0));
+  archivedChats = $derived(this.sidebarTotals.archived);
+  unreadChats = $derived(this.sidebarTotals.unreadChats);
+  unreadPings = $derived(this.sidebarTotals.unreadMentions);
 
   /** Each account's own picture as last seen, so it shows before that account connects. */
   accountAvatars = $derived(
@@ -127,16 +124,85 @@ export class ChatsState {
 
   async refreshChats() {
     const seq = ++this.chatsSeq;
+    const scope = this.sidebarScope;
+    const depth = Math.max(this.sidebarRows.length, 64);
+    const oldRows = this.sidebarRows;
+    const pageSeq = ++this.pageSeq;
+    this.sidebarLoading = true;
     try {
-      const next = await invoke<ChatSummary[]>("chats", { mute_all_at_all: session.settings.mute_all_at_all ?? false });
-      // A slow response must not overwrite a newer list.
-      if (seq !== this.chatsSeq) return;
-      // Keep the objects of rows that did not change, so the sidebar
-      // re-renders only what moved or changed.
-      this.chats = mergeSummaries(this.chats, next);
+      const rows: ChatSummary[] = [];
+      let after: string | null = null;
+      let first: ChatPage | null = null;
+      do {
+        const page: ChatPage = await invoke<ChatPage>("chats_page", { muteAllAtAll: session.settings.mute_all_at_all ?? false,
+          filter: this.sidebarIncludeArchived && this.chatFilter === "all" ? "space_all" : this.chatFilter,
+          allowedChats: this.sidebarAllowed, orderAllowed: this.sidebarOrderAllowed, after, limit: Math.min(100, depth - rows.length) });
+        if (seq !== this.chatsSeq || scope !== this.sidebarScope) return;
+        first ??= page;
+        rows.push(...page.rows);
+        after = page.next_cursor;
+      } while (after && rows.length < depth);
+      const oldIds = new Set(oldRows.map((row) => row.chat));
+      this.sidebarRows = mergeSummaries(oldRows, rows);
+      this.sidebarCursor = after;
+      this.sidebarTotals = { archived: first!.archived_count, unreadChats: first!.unread_chats,
+        unreadMentions: first!.unread_mentions, desktopUnread: first!.desktop_unread };
+      this.chats = mergeSummaries(this.chats, [...rows, ...this.chats.filter((row) => !oldIds.has(row.chat))]);
     } catch (e) {
       ui.fail(e);
-    }
+    } finally { if (pageSeq === this.pageSeq) this.sidebarLoading = false; }
+  }
+
+  setSidebarScope(allowed: string[] | null, orderAllowed = false, includeArchived = false) {
+    const scope = JSON.stringify([this.chatFilter, allowed, orderAllowed, includeArchived]);
+    if (scope === this.sidebarScope) return;
+    this.sidebarScope = scope;
+    this.sidebarAllowed = allowed;
+    this.sidebarOrderAllowed = orderAllowed;
+    this.sidebarIncludeArchived = includeArchived;
+    this.sidebarRows = [];
+    this.sidebarCursor = null;
+    this.sidebarLoading = false;
+    this.pageSeq++;
+    void this.refreshChats();
+  }
+
+  async loadMoreChats() {
+    const after = this.sidebarCursor;
+    if (!after || this.sidebarLoading) return;
+    const scope = this.sidebarScope, seq = ++this.pageSeq;
+    this.sidebarLoading = true;
+    try {
+      const page = await invoke<ChatPage>("chats_page", { muteAllAtAll: session.settings.mute_all_at_all ?? false,
+        filter: this.sidebarIncludeArchived && this.chatFilter === "all" ? "space_all" : this.chatFilter,
+        allowedChats: this.sidebarAllowed, orderAllowed: this.sidebarOrderAllowed, after, limit: 64 });
+      if (seq !== this.pageSeq || scope !== this.sidebarScope) return;
+      const known = new Set(this.sidebarRows.map((row) => row.chat));
+      this.sidebarRows = mergeSummaries(this.sidebarRows, [...this.sidebarRows, ...page.rows.filter((row) => !known.has(row.chat))]);
+      this.sidebarCursor = page.next_cursor;
+      const cache = new Map(this.chats.map((row) => [row.chat, row]));
+      for (const row of page.rows) cache.set(row.chat, row);
+      this.chats = mergeSummaries(this.chats, [...cache.values()]);
+    } catch (error) { if (scope === this.sidebarScope) ui.fail(error); }
+    finally { if (seq === this.pageSeq && scope === this.sidebarScope) this.sidebarLoading = false; }
+  }
+
+  async allChats(): Promise<ChatSummary[]> {
+    const account = session.activeAccount;
+    const rows = await invoke<ChatSummary[]>("chats", { muteAllAtAll: session.settings.mute_all_at_all ?? false });
+    if (account === session.activeAccount) this.chats = mergeSummaries(this.chats, rows);
+    return rows;
+  }
+
+  async hydrateChat(chat: string) {
+    const account = session.activeAccount, seq = ++this.summarySeq;
+    try {
+      const page = await invoke<ChatPage>("chats_page", { muteAllAtAll: session.settings.mute_all_at_all ?? false,
+        filter: "space_all", allowedChats: [chat], orderAllowed: false, after: null, limit: 1 });
+      if (account !== session.activeAccount || seq !== this.summarySeq || chat !== this.selectedChat) return;
+      const row = page.rows[0];
+      if (row) this.chats = mergeSummaries(this.chats, [row, ...this.chats.filter((item) => item.chat !== chat)]);
+    } catch (error) { if (account === session.activeAccount && chat === this.selectedChat) ui.fail(error); }
   }
 
   /** Runs the chat/contact/group search, debounced while the user types. */
@@ -287,9 +353,16 @@ export class ChatsState {
 
   /** Mirrors resetUi: list, selection, pictures and the group panel are dropped. */
   resetAccount() {
+    this.chatsSeq++;
+    this.pageSeq++;
+    this.summarySeq++;
     this.labelFilter = "";
     this.clearSearch();
     this.chats = [];
+    this.sidebarRows = [];
+    this.sidebarCursor = null;
+    this.sidebarTotals = { archived: 0, unreadChats: 0, unreadMentions: 0, desktopUnread: 0 };
+    this.sidebarScope = "";
     this.avatars = {};
     this.requestedAvatars.clear();
     this.selectedChat = null;

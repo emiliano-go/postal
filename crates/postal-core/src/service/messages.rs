@@ -250,6 +250,10 @@ impl WhatsAppService {
         self.store.chat_mute_at_all(chat).await
     }
 
+    pub async fn muted_until(&self, chat: &str) -> Result<i64> {
+        self.store.muted_until(chat).await
+    }
+
     /// Mutes or unmutes @all mentions in one chat; direct mentions still ping.
     pub async fn set_chat_mute_at_all(&self, chat: &str, muted: bool) -> Result<()> {
         self.store.set_chat_mute_at_all(chat, muted).await
@@ -754,5 +758,9 @@ impl WhatsAppService {
     /// Chat summaries with the global @all mute applied on top of per-chat mutes.
     pub async fn chats_with(&self, mute_all_at_all: bool) -> Result<Vec<crate::store::ChatSummary>> {
         self.store.chats_with(mute_all_at_all).await
+    }
+
+    pub async fn chats_page(&self, mute_all_at_all: bool, filter: String, allowed: Option<Vec<String>>, order_allowed: bool, after: Option<String>, limit: usize) -> Result<crate::store::ChatPage> {
+        self.store.chats_page(mute_all_at_all, filter, allowed, order_allowed, after, limit).await
     }
 }

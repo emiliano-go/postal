@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recover-message-store"
+description = "Enables the recover_message_store command without any pre-configured scope."
+commands.allow = ["recover_message_store"]
+
+[[permission]]
+identifier = "deny-recover-message-store"
+description = "Denies the recover_message_store command without any pre-configured scope."
+commands.deny = ["recover_message_store"]

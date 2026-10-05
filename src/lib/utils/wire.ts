@@ -42,6 +42,7 @@ forwarded: Array<string>,
  * Ids of messages their sender edited.
  */
 edited: Array<string>, download_failures?: { [key in string]: MessageFailure }, };
+export type ChatPage = { rows: Array<ChatSummary>, next_cursor: string | null, archived_count: number, unread_chats: number, unread_mentions: number, desktop_unread: number, };
 export type ChatRetention = { max_age_hours: RetentionLimit, max_messages: RetentionLimit,
 /**
  * Whether scrolling to the top asks the phone for older messages.
@@ -59,7 +60,7 @@ send_typing: boolean | null, send_receipts: boolean | null,
 /**
  * Whether @all mentions stay silent in this chat.
  */
-mute_at_all: boolean, };
+mute_at_all: boolean, muted_until: number, };
 export type ChatStorage = { chat: string, name: string | null, bytes: number, by_kind: { [key in string]: number }, };
 export type ChatSummary = { chat: string,
 /**
@@ -282,6 +283,9 @@ export type MessagePageDirection = "before" | "after" | "through";
 export type MessageParam = string | number | boolean | null;
 export type MessageReceipt = { recipient: string, name: string | null, delivered_at: number | null, read_at: number | null, played_at: number | null, };
 export type MessageRef = { code: string, params: { [key in string]: MessageParam }, };
+export type MessageStoreHealth = { status: MessageStoreStatus, path: string | null, diagnosis: string | null, };
+export type MessageStoreRecovery = { preserved_directory: string, restart_diagnostic: string | null, };
+export type MessageStoreStatus = "disabled" | "missing" | "healthy" | "corrupt";
 export type OnceState = {
 /**
  * Whether a device was ever linked; survives the instance being stopped.

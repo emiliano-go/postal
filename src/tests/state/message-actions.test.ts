@@ -66,6 +66,11 @@ async function withApp(run: (app: {
     runSearch: () => void;
     resetAccount: () => void;
     chats: ChatSummary[];
+    sidebarRows: ChatSummary[];
+    sidebarCursor: string | null;
+    refreshChats: () => Promise<void>;
+    loadMoreChats: () => Promise<void>;
+    hydrateChat: (chat: string) => Promise<void>;
   };
   calls: { command: string; args: unknown }[];
   normalizeError: (value: unknown) => LocalizedError;
@@ -74,7 +79,12 @@ async function withApp(run: (app: {
   const calls: { command: string; args: unknown }[] = [];
   Object.defineProperty(globalThis, "window", { configurable: true, value: {
     addEventListener() {},
-    __TAURI_INTERNALS__: { invoke: async (command: string, args: unknown) => { calls.push({ command, args }); return await beforeInvoke?.(command, args); } },
+    __TAURI_INTERNALS__: { invoke: async (command: string, args: unknown) => {
+      calls.push({ command, args });
+      const result = await beforeInvoke?.(command === "chats_page" ? "chats" : command, args);
+      return command === "chats_page" && !(result && typeof result === "object" && "rows" in result) ? { rows: result ?? [], next_cursor: null, archived_count: 0,
+        unread_chats: 0, unread_mentions: 0, desktop_unread: 0 } : result;
+    } },
   } });
   Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {} } });
   const server = await createServer({
@@ -122,6 +132,39 @@ async function withApp(run: (app: {
 
 /** Menu labels in sorted order, so assertions never pin down the sequence. */
 const labels = (items: Item[]) => items.map((item) => item.label).sort();
+
+test("paged refresh replaces stale loaded rows and hydrates an offpage selection", async () => {
+  let revision = 0;
+  const row = (index: number) => ({ chat: `chat-${index}@s`, unread_count: revision ? 1 : 0, muted_until: revision ? -1 : 0 } as ChatSummary);
+  const page = (rows: ChatSummary[], next_cursor: string | null) => ({ rows, next_cursor, archived_count: revision,
+    unread_chats: revision, unread_mentions: 0, desktop_unread: revision });
+  await withApp(async ({ chats, session }) => {
+    session.activeAccount = "paging-fixture";
+    await chats.refreshChats();
+    assert.equal(chats.sidebarRows.length, 64);
+    assert.equal(chats.sidebarCursor, "first");
+    await chats.loadMoreChats();
+    assert.equal(chats.sidebarRows.length, 128);
+    revision = 1;
+    await chats.refreshChats();
+    assert.equal(chats.sidebarRows.length, 128);
+    assert.ok(!chats.sidebarRows.some((item) => item.chat === "chat-0@s"));
+    assert.equal(chats.sidebarRows.find((item) => item.chat === "chat-126@s")?.muted_until, -1);
+    assert.equal(chats.chats.find((item) => item.chat === "chat-126@s")?.unread_count, 1);
+    chats.selectedChat = "offpage@s";
+    await chats.hydrateChat("offpage@s");
+    assert.equal(chats.chats.find((item) => item.chat === "offpage@s")?.unread_count, 7);
+    assert.ok(!chats.sidebarRows.some((item) => item.chat === "offpage@s"));
+  }, (command, args) => {
+    if (command !== "chats") return undefined;
+    const request = args as { after: string | null; limit: number; allowedChats: string[] | null };
+    if (request.allowedChats?.[0] === "offpage@s") return page([{ chat: "offpage@s", unread_count: 7 } as ChatSummary], null);
+    const rows = revision ? Array.from({ length: 128 }, (_, index) => row(index + 1)) : Array.from({ length: 128 }, (_, index) => row(index));
+    const start = request.after === "first" ? 64 : request.after === "hundred" ? 100 : 0;
+    const slice = rows.slice(start, start + request.limit);
+    return page(slice, start + slice.length < rows.length ? start + slice.length === 64 ? "first" : "hundred" : null);
+  });
+});
 
 function expectFailure(value: LocalizedError | string | null, detail: RegExp,
   normalize: (value: unknown) => LocalizedError, translate: (code: string, params?: MessageParams) => string) {
@@ -194,7 +237,7 @@ test("live updates survive a lost sync completion and flush deferred hints", asy
     await dispatchServiceEvent({ kind: "messageHint", chat, id: "hint", sender: row.sender, from_me: false,
       fresh: true, change: "content", status: null }, host);
     await new Promise((resolve) => setTimeout(resolve, 650));
-    assert.ok(calls.some((call) => call.command === "chats"), "live chat list refresh ignores pending sync");
+    assert.ok(calls.some((call) => call.command === "chats_page"), "live chat list refresh ignores pending sync");
     assert.equal(messages.messages.some((item) => item.id === "hint"), false);
     await new Promise((resolve) => setTimeout(resolve, 3_000));
     assert.equal(messages.messages[0]?.id, "hint", "watchdog flushes without synced event");
@@ -233,7 +276,7 @@ test("sync completion flushes a burst once and watchdog never crosses accounts",
     await dispatchServiceEvent({ kind: "syncing", pending: 100, applied: 20 }, host);
     await dispatchServiceEvent({ kind: "synced" }, host);
     await new Promise((resolve) => setTimeout(resolve, 650));
-    assert.equal(calls.filter((call) => call.command === "chats").length, 1);
+    assert.equal(calls.filter((call) => call.command === "chats_page").length, 1);
     assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
     await dispatchServiceEvent({ kind: "syncing", pending: 1, applied: 0 }, host);
     await dispatchServiceEvent(hint, host);
@@ -241,7 +284,7 @@ test("sync completion flushes a burst once and watchdog never crosses accounts",
     messages.resetAccount();
     await dispatchServiceEvent({ kind: "synced" }, host);
     await new Promise((resolve) => setTimeout(resolve, 650));
-    assert.equal(calls.filter((call) => call.command === "chats").length, 1);
+    assert.equal(calls.filter((call) => call.command === "chats_page").length, 1);
     assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
     await new Promise((resolve) => setTimeout(resolve, 3_100));
     assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
@@ -271,7 +314,7 @@ test("history completion preserves dirty flags raised while its chat query is pe
     resolveChat();
     await history;
     await new Promise((resolve) => setTimeout(resolve, 650));
-    assert.equal(calls.filter((call) => call.command === "chats").length, 2);
+    assert.equal(calls.filter((call) => call.command === "chats_page").length, 2);
     assert.equal(session.syncPending, 10, "history completion cannot reset a drain that began while awaiting its query");
   }, (command) => {
     if (command === "chats" && block) {
@@ -636,13 +679,13 @@ test("a late bulk delete cannot clear a new selection or reload a different chat
     await deleteSelected(false);
     assert.deepEqual(ui.picking, { next });
     assert.ok(!calls.some((call) => call.command === "message_page"));
-    const refreshed = calls.filter((call) => call.command === "chats").length;
+    const refreshed = calls.filter((call) => call.command === "chats_page").length;
     chats.selectedChat = old.chat;
     ui.picking = { old };
     move = () => { session.activeAccount = "next-account"; ui.picking = { next }; };
     await deleteSelected(false);
     assert.deepEqual(ui.picking, { next });
-    assert.equal(calls.filter((call) => call.command === "chats").length, refreshed);
+    assert.equal(calls.filter((call) => call.command === "chats_page").length, refreshed);
   }, (command) => { if (command === "delete_messages") move(); });
 });
 
@@ -717,7 +760,7 @@ test("forwarding sends every message to every chosen chat, in order", async () =
       { chat: "99@g.us", id: "newer", to: "y@s" },
     ]);
     assert.equal(ui.picking, null, "the selection ends once the batch is out");
-    assert.ok(calls.some((call) => call.command === "chats"), "the list refreshes");
+    assert.ok(calls.some((call) => call.command === "chats_page"), "the list refreshes");
   });
 });
 

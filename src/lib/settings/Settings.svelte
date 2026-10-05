@@ -64,7 +64,7 @@
   import { locale } from "$lib/i18n/locale.svelte";
   import { t, localeNames, type LocalePreference } from "$lib/i18n/localizer";
   import { messageText, normalizeError, type LocalizedError } from "$lib/i18n/errors";
-  import type { DatabaseEncryptionStatus, MessageRef } from "$lib/utils/wire";
+  import type { DatabaseEncryptionStatus, MessageRef, MessageStoreHealth, MessageStoreRecovery } from "$lib/utils/wire";
   import { limitValue, parseLimit } from "$lib/utils/retention";
   import type { NotifPermission } from "$lib/utils/notifications";
   import {
@@ -270,6 +270,65 @@
   onMount(() => {
     getVersion().then((v) => (version = v)).catch(() => {});
   });
+
+  let storeHealth = $state<MessageStoreHealth | null>(null);
+  let storeHealthError = $state<LocalizedError | null>(null);
+  let storeRecovery = $state<MessageStoreRecovery | null>(null);
+  let storeHealthBusy = $state(false);
+  let storeRecoveryConfirm = $state(false);
+  let storeHealthRevision = 0;
+  $effect(() => {
+    const account = active;
+    const currentSection = section;
+    const revision = ++storeHealthRevision;
+    storeHealth = null;
+    storeHealthError = null;
+    storeRecovery = null;
+    storeRecoveryConfirm = false;
+    storeHealthBusy = false;
+    if (currentSection !== "about" || !account) return;
+    const current = () => revision === storeHealthRevision && active === account && section === "about";
+    storeHealthBusy = true;
+    void invoke<MessageStoreHealth>("message_store_health", { account }).then((health) => {
+      if (current()) storeHealth = health;
+    }).catch((cause) => {
+      if (current()) storeHealthError = normalizeError(cause);
+    }).finally(() => { if (current()) storeHealthBusy = false; });
+    return () => { ++storeHealthRevision; };
+  });
+
+  async function recoverMessageStore() {
+    const account = active;
+    if (!account || storeHealthBusy || storeHealth?.status !== "corrupt" || !storeRecoveryConfirm) return;
+    const revision = storeHealthRevision;
+    const current = () => revision === storeHealthRevision && active === account && section === "about";
+    storeHealthBusy = true;
+    storeHealthError = null;
+    try {
+      const recovered = await invoke<MessageStoreRecovery>("recover_message_store", { account });
+      if (!current()) return;
+      storeRecovery = recovered;
+      storeHealth = { status: "healthy", path: storeHealth.path, diagnosis: null };
+      storeRecoveryConfirm = false;
+      await tick();
+      if (current()) settingsContent?.querySelector<HTMLElement>('[data-setting-search-id="about-store-restore"]')?.focus();
+    } catch (cause) {
+      if (current()) storeHealthError = normalizeError(cause);
+    } finally {
+      if (current()) {
+        storeHealthBusy = false;
+        if (storeHealth?.status === "corrupt") {
+          await tick();
+          if (current()) settingsContent?.querySelector<HTMLElement>('[data-setting-search-id="about-store-confirm"]')?.focus();
+        }
+      }
+    }
+  }
+
+  function openBackupRestore() {
+    const restore = searchItems.find(({ id }) => id === "privacy-archive-restore");
+    if (restore) void jumpToSetting(restore);
+  }
 
   $effect(() => {
     // Re-read when the section opens and after a save, which may have started it.
@@ -503,7 +562,8 @@
     (field.id !== "appearance-picture-darken" || !!customization.background) &&
     (field.id !== "chat-preview-delay" || draft.chat_preview) &&
     (field.id !== "device-companion" || draft.keep_history) &&
-    (field.id !== "media-stickers" || (!!active && session.connected))), t, NAV.map(({ id }) => id)));
+    (field.id !== "media-stickers" || (!!active && session.connected)) &&
+    (field.id !== "about-store-health" || !!active)), t, NAV.map(({ id }) => id)));
 
   function clearSearchFocusWait() {
     focusObserver?.disconnect();
@@ -1380,6 +1440,43 @@
             <button class="button" onclick={() => invoke("open_log").catch(() => {})}>{t("settings.main.open_log")}</button>
           </div>
           <BooleanProps />
+          {#if active}
+            <section class="setting stack" data-setting-search-id="about-store-health" tabindex="-1" aria-label={t("settings.store_title")}>
+              <h3>{t("settings.store_title")}</h3>
+              {#if storeHealthBusy}<p role="status">{t(storeHealth?.status === "corrupt" ? "settings.store_recovering" : "settings.store_checking")}</p>{/if}
+              {#if storeHealthError}<p class="error" role="alert"><bdi>{localizedMessage(storeHealthError.descriptor)}</bdi></p>{/if}
+              {#if storeHealthError?.diagnostic}<details><summary>{t("settings.encryption_diagnostics")}</summary><pre dir="auto">{storeHealthError.diagnostic}</pre></details>{/if}
+              {#if storeHealth}
+                <p role={storeHealth.status === "corrupt" ? "alert" : "status"}>{t(`settings.store_${storeHealth.status}`)}</p>
+                {#if storeHealth.path}<p class="setting-desc"><bdi dir="auto">{storeHealth.path}</bdi></p>{/if}
+                {#if storeHealth.diagnosis}<pre dir="auto">{storeHealth.diagnosis}</pre>{/if}
+                {#if storeHealth.status === "corrupt"}
+                  <p class="setting-desc">{t("settings.store_recovery_hint")}</p>
+                  <button class="button" data-setting-search-id="about-store-recovery" disabled={storeHealthBusy} aria-expanded={storeRecoveryConfirm} onclick={() => (storeRecoveryConfirm = true)}>{t("settings.store_recover")}</button>
+                  {#if storeRecoveryConfirm}
+                    <div role="group" aria-label={t("settings.store_recovery_confirm")}>
+                      <p>{t("settings.store_recovery_confirm")}</p>
+                      <button class="button" disabled={storeHealthBusy} onclick={() => {
+                        storeRecoveryConfirm = false;
+                        settingsContent?.querySelector<HTMLElement>('[data-setting-search-id="about-store-recovery"]')?.focus();
+                      }}>{t("ui.cancel")}</button>
+                      <button class="button primary" data-setting-search-id="about-store-confirm" disabled={storeHealthBusy} onclick={recoverMessageStore}>{t("settings.store_recover")}</button>
+                    </div>
+                  {/if}
+                {/if}
+              {/if}
+              {#if storeRecovery}
+                <p role="status">{t("settings.store_recovered")}</p>
+                <p class="setting-desc"><bdi dir="auto">{storeRecovery.preserved_directory}</bdi></p>
+                {#if storeRecovery.restart_diagnostic}
+                  <p class="error" role="alert">{t("settings.store_restart_failed")}</p>
+                  <details><summary>{t("settings.encryption_diagnostics")}</summary><pre dir="auto">{storeRecovery.restart_diagnostic}</pre></details>
+                {/if}
+                <p class="setting-desc">{t("settings.store_restore_hint")}</p>
+                <button class="button" data-setting-search-id="about-store-restore" onclick={openBackupRestore}>{t("settings.archive_restore")}</button>
+              {/if}
+            </section>
+          {/if}
         {/if}
 
   {#snippet footer()}
@@ -1644,5 +1741,6 @@
     color: var(--danger);
     font-weight: 600;
   }
+  .setting.stack pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   :global([data-setting-search-match="true"]) { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>

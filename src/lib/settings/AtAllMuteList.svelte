@@ -3,14 +3,26 @@
 <script lang="ts">
   import { t } from "$lib/i18n/localizer";
   import { chats } from "$lib/state/chats.svelte";
+  import { session } from "$lib/state/session.svelte";
+  import { ui } from "$lib/state/ui.svelte";
 
-  const muted = $derived(chats.chats.filter((chat) => chat.mute_at_all));
+  let all = $state.raw<import("$lib/utils/wire").ChatSummary[]>([]);
+  $effect(() => {
+    const account = session.activeAccount;
+    if (!account || !session.connected) { all = []; return; }
+    let current = true;
+    void chats.allChats().then((rows) => { if (current && account === session.activeAccount) all = rows; })
+      .catch((error) => { if (current && account === session.activeAccount) ui.fail(error); });
+    return () => { current = false; };
+  });
+  const muted = $derived(all.filter((chat) => chat.mute_at_all));
   let busy = $state<string | null>(null);
 
   async function unmute(chat: string) {
     busy = chat;
     try {
       await chats.chatAction("set_chat_mute_at_all", { chat, muted: false });
+      all = await chats.allChats();
     } finally {
       if (busy === chat) busy = null;
     }

@@ -12,12 +12,16 @@
     ctx,
     api,
     albumCell = false,
+    keyboardFocused = false,
+    keyboardLabel,
   }: {
     message: StoredMessage;
     prev: StoredMessage | undefined;
     ctx: BubbleCtx;
     api: BubbleApi;
     albumCell?: boolean;
+    keyboardFocused?: boolean;
+    keyboardLabel?: string;
   } = $props();
 
   const vm = $derived(buildVm(message, prev, ctx));
@@ -94,4 +98,4 @@
   }
 </script>
 
-<MessageBubble {message} {vm} {api} {albumCell} />
+<MessageBubble {message} {vm} {api} {albumCell} {keyboardFocused} {keyboardLabel} />

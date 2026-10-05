@@ -20,15 +20,19 @@ const declaration = (name: string) => tree.statements.filter(ts.isVariableStatem
 const reset = tree.statements.find((node) => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
   && node.expression.expression.getText(tree) === "$effect" && node.expression.arguments[0].getText(tree).includes("spaceCatalogRequest++"));
 assert.ok(reset && ts.isExpressionStatement(reset) && ts.isCallExpression(reset.expression));
+const scope = tree.statements.find((node) => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
+  && node.expression.expression.getText(tree) === "$effect" && node.expression.arguments[0].getText(tree).includes("setSidebarScope"));
+assert.ok(scope && ts.isExpressionStatement(scope) && ts.isCallExpression(scope.expression));
 const body = ["refreshSpaceCatalog", "openSpaceTarget"].map((name) => {
   const node = tree.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.ok(node, name); return node.getText(tree);
 });
-for (const [name, variable, by] of [["visible", "visibleChats", false], ["order", "spaceChatOrder", false], ["candidates", "spaceCandidates", true]] as const) {
+for (const [name, variable, by] of [["visible", "visibleChats", false], ["candidates", "spaceCandidates", true]] as const) {
   const node = declaration(variable); assert.ok(node && ts.isCallExpression(node), variable);
   body.push(`var ${name} = ${by ? node.arguments[0].getText(tree) : `() => (${node.arguments[0].getText(tree)})`};`);
 }
 body.push(`var resetScope = ${reset.expression.arguments[0].getText(tree)};`);
+body.push(`var applyScope = ${scope.expression.arguments[0].getText(tree)};`);
 const compiled = ts.transpileModule(body.join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const markup = parse(source, { modern: true }) as any;
 function component(name: string) {
@@ -57,14 +61,15 @@ function deferred<T>() {
 function fixture() {
   const calls: { command: string; args: any }[] = [], opened: any[] = [], searches: string[] = [], mutations: any[] = [];
   const c: Record<string, any> = {
-    session: { activeAccount: "a", started: true }, messages: { accountGeneration: 1 },
+    session: { activeAccount: "a", started: true, connected: true }, messages: { accountGeneration: 1 },
     spaces: { account: "a", loaded: true, selected: { kind: "space", space_id: "root" }, snapshot: { spaces: [], items: [] },
       resolution: { chats: ["archived@lid", "child@lid", "label@lid", "search@lid", "inbox@lid"], items: [] },
       reset: () => { c.spaces.account = null; }, refresh: async () => { c.spaces.account = c.session.activeAccount; },
       mutate: async (action: any) => { mutations.push(action); }, add: async (space: string, targets: any[]) => { mutations.push({ space, targets }); } },
-    chats: { chats: [], visibleChats: [], searchResults: [], chatFilter: "all", labelFilter: "", chatName: (jid: string) => jid },
-    labels: { account: "a", view: { labels: [{ id: "17", name: "Customers" }] }, refresh: async () => {}, chatIds: () => [] },
-    favorites: { chats: [] }, keywords: { account: "a", counts: {} }, members: { displayName: (name: string) => name },
+    chats: { chats: [], sidebarRows: [], searchResults: [], chatFilter: "all", labelFilter: "", chatName: (jid: string) => jid,
+      setSidebarScope: (allowed: string[] | null, ordered: boolean, includeArchived: boolean) => { c.scopeSelection = { allowed, ordered, includeArchived }; } },
+    labels: { account: "a", view: { labels: [{ id: "17", name: "Customers" }], chats: [] }, refresh: async () => {}, chatIds: () => [] },
+    favorites: { chats: [], rows: (rows: unknown[]) => rows }, keywords: { account: "a", counts: {} }, members: { displayName: (name: string) => name },
     ui: { finder: null, showInbox: false }, spaceCatalog: [], spaceGroups: [], spaceSaved: [], spaceCatalogRequest: 0,
     spaceCatalogLoading: false, spaceCatalogError: null, spacePickerFor: null, spaceCommunityFor: null,
     switcherQuery: "", quickSwitcher: false, spaceFinderKey: 0, spaceOpenSeq: 0, chatOpenSeq: 0,
@@ -76,21 +81,26 @@ function fixture() {
     searchChat: async (query: string, _more = false, localOnly = false) => { searches.push(query); c.ui.finder = { ...c.ui.finder, more: !localOnly }; },
   };
   runInNewContext(compiled, c);
-  Object.defineProperty(c, "spaceChatOrder", { get: () => c.order() });
   return { c, calls, opened, searches, mutations };
 }
 
 test("route uses native descendant/dynamic membership, archived refs and order without invented chats", () => {
   const { c } = fixture();
   c.chats.chats = ["outside@lid", "inbox@lid", "search@lid", "label@lid", "child@lid", "archived@lid"].map((chat) => ({ chat, mention_count: 1, archived: chat === "archived@lid" }));
-  c.chats.visibleChats = c.chats.chats.filter((chat: any) => !chat.archived);
+  c.chats.sidebarRows = c.spaces.resolution.chats.map((jid: string) => c.chats.chats.find((chat: any) => chat.chat === jid));
   c.spaces.resolution.chats.push("contact-without-history@lid");
   c.keywords.counts["child@lid"] = 2;
+  c.applyScope();
+  assert.deepEqual(Array.from(c.scopeSelection.allowed), c.spaces.resolution.chats);
+  assert.equal(c.scopeSelection.includeArchived, true);
   assert.deepEqual(Array.from(c.visible(), (chat: any) => chat.chat), ["archived@lid", "child@lid", "label@lid", "search@lid", "inbox@lid"]);
   assert.equal(c.visible().find((chat: any) => chat.chat === "child@lid").mention_count, 3);
   c.chats.searchResults = [{ jid: "outside@lid" }, { jid: "child@lid" }];
   assert.deepEqual(Array.from(attribute("ChatSidebar", "searchResults", c), (row: any) => row.jid), ["child@lid"]);
   c.spaces.selected = { kind: "all" };
+  c.applyScope();
+  assert.equal(c.scopeSelection.allowed, null);
+  c.chats.sidebarRows = c.chats.chats.filter((chat: any) => !chat.archived);
   assert.ok(c.visible().some((chat: any) => chat.chat === "outside@lid"));
   assert.ok(!c.visible().some((chat: any) => chat.archived));
 });

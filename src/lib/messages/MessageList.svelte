@@ -4,7 +4,7 @@
   cursor pager. Moved out of +page.svelte. -->
 <script lang="ts">
   import { t } from "$lib/i18n/localizer";
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { VList, type VListHandle } from "virtua/svelte";
   import MessageRow from "$lib/messages/MessageRow.svelte";
   import AlbumGrid from "$lib/messages/AlbumGrid.svelte";
@@ -16,6 +16,9 @@
   import OutgoingItem from "$lib/messages/OutgoingItem.svelte";
   import TypingIndicator from "$lib/media/TypingIndicator.svelte";
   import { bare, isUnavailable } from "$lib/utils/message";
+  import { floatContent } from "$lib/utils/float-chat";
+  import { accessibility, announceStatus } from "$lib/utils/accessibility.svelte";
+  import { messageRailAction, messageRailId } from "$lib/utils/message-rail";
   import { unavailableLabel, unavailableExplanation } from "$lib/utils/notices";
   import { isPollNotice } from "$lib/utils/structured-notices";
   import type {
@@ -80,6 +83,7 @@
     onreplydraft,
     onmenu,
     onpick,
+    onstar,
     picking = null,
     onjumpquoted,
     ondownload,
@@ -158,6 +162,7 @@
     onreplydraft: (m: StoredMessage) => void;
     onmenu: (e: MouseEvent, m: StoredMessage) => void;
     onpick: (m: StoredMessage, extend?: boolean) => void;
+    onstar?: (m: StoredMessage) => unknown;
     /** Messages picked for a bulk action, in the open chat; null when not picking. */
     picking?: Record<string, StoredMessage> | null;
     onjumpquoted: (m: StoredMessage) => void;
@@ -259,6 +264,8 @@
   );
   const visibleMessages = $derived(messages.filter((message) => !keywords.hidden(message)));
   const timeline = $derived(albumTimeline(messages, firstUnreadId, (message) => keywords.hidden(message), dayKey));
+  const keyboardMessages = $derived(timeline.flatMap((group) => group.messages).filter((message) => !isUnavailable(message) && !message.system_kind && !isPollNotice(message)));
+  const keyboardPositions = $derived.by(() => new Map(keyboardMessages.map((message, index) => [message.id, index + 1])));
 
   type Vrow =
     | { kind: "e2e"; key: string }
@@ -292,6 +299,12 @@
   });
 
   let list = $state<VListHandle>();
+  let rail = $derived(scroller);
+  let focusedMessageId = $state<string | null>(null);
+  let activeDescendant = $state<string | null>(null);
+  let focusRevision = 0;
+  let focusObserver: MutationObserver | undefined;
+  let focusTimeout: ReturnType<typeof setTimeout> | undefined;
   let revealRequest = 0;
   const rowIndices = $derived.by(() => {
     const indices = new Map<string, number>();
@@ -303,6 +316,134 @@
     return indices;
   });
   function viewport() { return scroller?.querySelector<HTMLElement>(".message-viewport") ?? null; }
+
+  function messageFocusLabel(message: StoredMessage) {
+    const content = floatContent(message);
+    const text = [...[content.text, content.media].filter(Boolean).join(". ")].slice(0, 180).join("");
+    return t("content.message_focus_announcement", {
+      sender: senderLabel(message),
+      index: keyboardPositions.get(message.id) ?? 1,
+      count: keyboardMessages.length,
+      time: formatTime(message.timestamp),
+      text,
+    });
+  }
+
+  function commitMessageFocus(id: string, revision: number, message: StoredMessage) {
+    if (revision !== focusRevision || focusedMessageId !== id) return false;
+    const target = rail?.querySelector<HTMLElement>(`#${CSS.escape(messageRailId(id))}`);
+    if (!target || !rail?.contains(target)) return false;
+    activeDescendant = target.id;
+    announceStatus(messageFocusLabel(message), true);
+    focusObserver?.disconnect();
+    focusObserver = undefined;
+    clearTimeout(focusTimeout);
+    focusTimeout = undefined;
+    return true;
+  }
+
+  function focusMessage(message: StoredMessage) {
+    const index = rowIndices.get(message.id);
+    if (index === undefined) return false;
+    const revision = ++focusRevision;
+    focusObserver?.disconnect();
+    focusObserver = undefined;
+    clearTimeout(focusTimeout);
+    activeDescendant = null;
+    focusedMessageId = message.id;
+    rail?.focus({ preventScroll: true });
+    list?.scrollToIndex(index, { align: "center" });
+    void tick().then(() => {
+      if (revision !== focusRevision || focusedMessageId !== message.id) return;
+      if (commitMessageFocus(message.id, revision, message)) return;
+      if (!rail) return;
+      focusObserver = new MutationObserver(() => commitMessageFocus(message.id, revision, message));
+      focusObserver.observe(rail, { childList: true, subtree: true });
+      focusTimeout = setTimeout(() => {
+        if (revision === focusRevision) {
+          focusObserver?.disconnect();
+          focusObserver = undefined;
+          focusTimeout = undefined;
+        }
+      }, 5000);
+    });
+    return true;
+  }
+
+  function visibleFocusIndex() {
+    const element = viewport();
+    if (!element) return 0;
+    const bounds = element.getBoundingClientRect();
+    const id = [...element.querySelectorAll<HTMLElement>(".bubble[data-id]")]
+      .find((bubble) => { const rect = bubble.getBoundingClientRect(); return rect.bottom > bounds.top && rect.top < bounds.bottom; })?.dataset.id;
+    return keyboardMessages.findIndex((message) => message.id === id);
+  }
+
+  function pageStep() {
+    const element = viewport();
+    if (!element) return 1;
+    const bounds = element.getBoundingClientRect();
+    const visible = new Set([...element.querySelectorAll<HTMLElement>(".bubble[data-id]")]
+      .filter((bubble) => { const rect = bubble.getBoundingClientRect(); return rect.bottom > bounds.top && rect.top < bounds.bottom; })
+      .map((bubble) => bubble.dataset.id));
+    return Math.max(1, visible.size - 1);
+  }
+
+  function onRailKeydown(event: KeyboardEvent) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("button, a, input, textarea, select, summary, [role='button'], [contenteditable='true']")) return;
+    const editable = !!target?.closest("input, textarea, select, [contenteditable='true'], [role='textbox']");
+    const action = messageRailAction(event, editable, accessibility.charShortcutsEnabled);
+    if (!action) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!keyboardMessages.length) return;
+    const targetId = target?.closest<HTMLElement>(".msg-row")?.querySelector<HTMLElement>(".bubble[data-id]")?.dataset.id;
+    const currentId = focusedMessageId ?? targetId;
+    const current = currentId && rail?.querySelector(`#${CSS.escape(messageRailId(currentId))}`)
+      ? keyboardMessages.findIndex((message) => message.id === currentId) : -1;
+    if (action === "previous" || action === "next" || action === "page-previous" || action === "page-next" || action === "first" || action === "last") {
+      const base = current >= 0 ? current : visibleFocusIndex();
+      const delta = action === "previous" ? -1 : action === "next" ? 1 : action === "page-previous" ? -pageStep() : action === "page-next" ? pageStep() : 0;
+      const index = action === "first" ? 0 : action === "last" ? keyboardMessages.length - 1 : Math.max(0, Math.min(keyboardMessages.length - 1, base < 0 ? 0 : base + delta));
+      focusMessage(keyboardMessages[index]);
+      return;
+    }
+    const message = keyboardMessages[current >= 0 ? current : Math.max(0, visibleFocusIndex())];
+    if (!message) return;
+    if (current < 0) focusMessage(message);
+    else focusedMessageId = message.id;
+    if (action === "menu") {
+      const bubble = [...(viewport()?.querySelectorAll<HTMLElement>(".bubble[data-id]") ?? [])].find((item) => item.dataset.id === message.id);
+      bubble?.querySelector<HTMLButtonElement>(".reply-btn")?.click();
+    } else if (action === "reply" && !picking && !message.revoked && !message.deleted) {
+      onreplydraft(message);
+    } else if (action === "star") {
+      onstar?.(message);
+    } else if (action === "select" && !message.revoked && !message.deleted) {
+      const count = Object.keys(picking ?? {}).length + (picking?.[message.id] ? -1 : 1);
+      onpick(message);
+      announceStatus(t("content.selected_count", { count }), true);
+    }
+  }
+
+  export function focusRail() {
+    rail?.focus({ preventScroll: true });
+  }
+
+  $effect(() => {
+    if (focusedMessageId && !rowIndices.has(focusedMessageId)) {
+      ++focusRevision;
+      focusedMessageId = null;
+      activeDescendant = null;
+    }
+  });
+
+  onDestroy(() => {
+    ++focusRevision;
+    focusObserver?.disconnect();
+    clearTimeout(focusTimeout);
+  });
 
   export function visibleReadIds(): Set<string> {
     const element = viewport(), visible = new Set<string>();
@@ -318,6 +459,19 @@
     const size = list?.getScrollSize() ?? 0;
     const viewport = list?.getViewportSize() ?? 0;
     onscroll({ offset, distance: size - offset - viewport, viewport });
+    if (activeDescendant) {
+      const current = activeDescendant;
+      requestAnimationFrame(() => {
+        if (activeDescendant === current && !rail?.querySelector(`#${CSS.escape(current)}`)) {
+          ++focusRevision;
+          activeDescendant = null;
+          focusedMessageId = null;
+          focusObserver?.disconnect();
+          focusObserver = undefined;
+          clearTimeout(focusTimeout);
+        }
+      });
+    }
   }
 
   /** Keeps the newest row in view; used after sends and on follow. */
@@ -368,9 +522,15 @@
   // One capture listener for the list instead of one per row: picking and
   // ctrl-click intercept before any inner button sees the click.
   function captureClick(event: MouseEvent) {
-    const row = (event.target as HTMLElement | null)?.closest?.(".msg-row");
+    const row = (event.target as HTMLElement | null)?.closest?.<HTMLElement>(".msg-row");
     const id = row?.querySelector<HTMLElement>(".bubble[data-id]")?.dataset.id;
     if (!id) return;
+    ++focusRevision;
+    focusObserver?.disconnect();
+    focusObserver = undefined;
+    clearTimeout(focusTimeout);
+    focusedMessageId = keyboardPositions.has(id) ? id : null;
+    activeDescendant = focusedMessageId ? row?.id ?? null : null;
     const message = messages.find((m) => m.id === id);
     if (!message || message.revoked) return;
     if (picking || event.ctrlKey || event.metaKey) {
@@ -381,12 +541,21 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="messages"
   class:switching={switching && messages.length > 0}
   class:group={isGroup}
+  role="group"
+  aria-label={t("content.message_rail_label")}
+  aria-describedby="message-rail-shortcuts"
+  aria-activedescendant={activeDescendant ?? undefined}
+  tabindex="0"
   bind:this={scroller}
+  onkeydown={onRailKeydown}
   onclickcapture={captureClick}>
+  <span class="visually-hidden" id="message-rail-shortcuts">{t("help.messages")}</span>
   {#if switching && messages.length === 0}
     <p class="loading">{t("content.loading_messages")}</p>
   {/if}
@@ -430,7 +599,8 @@
                 {/if}
               {/snippet}
               {#snippet children(child, previous)}
-                <MessageRow message={child} prev={previous?.system_kind || (previous && isPollNotice(previous)) ? undefined : previous} {ctx} {api} albumCell />
+                <MessageRow message={child} prev={previous?.system_kind || (previous && isPollNotice(previous)) ? undefined : previous} {ctx} {api}
+                  keyboardFocused={focusedMessageId === child.id} keyboardLabel={focusedMessageId === child.id ? messageFocusLabel(child) : undefined} albumCell />
               {/snippet}
             </AlbumGrid>
           {:else if isUnavailable(message)}
@@ -450,7 +620,8 @@
               {message}
               prev={prev?.system_kind || (prev && isPollNotice(prev)) ? undefined : prev}
               {ctx}
-              {api} />
+              {api}
+              keyboardFocused={focusedMessageId === message.id} keyboardLabel={focusedMessageId === message.id ? messageFocusLabel(message) : undefined} />
           {/if}
           {#each group.afterIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
         {:else if row.kind === "upload"}
@@ -464,6 +635,7 @@
 </div>
 
 <style>
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .album-anchor { display: block; height: 0; }
   .messages {
     flex: 1;

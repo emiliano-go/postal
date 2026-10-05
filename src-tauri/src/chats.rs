@@ -1,4 +1,4 @@
-use postal_core::ChatSummary;
+use postal_core::{ChatPage, ChatSummary};
 use tauri::State;
 use crate::{AppState, command_error::{CommandError, CommandResult}};
 
@@ -6,6 +6,13 @@ use crate::{AppState, command_error::{CommandError, CommandResult}};
 #[tauri::command(async)]
 pub(crate) async fn chats(state: State<'_, AppState>, mute_all_at_all: Option<bool>) -> CommandResult<Vec<ChatSummary>> {
     state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?.chats_with(mute_all_at_all.unwrap_or(false)).await.map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
+pub(crate) async fn chats_page(state: State<'_, AppState>, mute_all_at_all: Option<bool>, filter: String,
+    allowed_chats: Option<Vec<String>>, order_allowed: Option<bool>, after: Option<String>, limit: usize) -> CommandResult<ChatPage> {
+    state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?
+        .chats_page(mute_all_at_all.unwrap_or(false), filter, allowed_chats, order_allowed.unwrap_or(false), after, limit).await.map_err(CommandError::from)
 }
 
 #[derive(serde::Serialize)]
@@ -22,6 +29,7 @@ pub(crate) struct ChatSettings {
     send_receipts: Option<bool>,
     /// Whether @all mentions stay silent in this chat.
     mute_at_all: bool,
+    muted_until: i64,
 }
 
 #[tauri::command(async)]
@@ -37,6 +45,7 @@ pub(crate) async fn chat_settings(state: State<'_, AppState>, chat: String) -> C
         unarchive: service.chat_unarchive(&chat).await.map_err(CommandError::from)?,
         retention: service.chat_retention(&chat).await.map_err(CommandError::from)?,
         mute_at_all: service.chat_mute_at_all(&chat).await.map_err(CommandError::from)?,
+        muted_until: service.muted_until(&chat).await.map_err(CommandError::from)?,
     })
 }
 

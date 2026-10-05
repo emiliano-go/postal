@@ -8,6 +8,8 @@
   "permissions": [
     "allow-set-native-locale",
     "allow-database-encryption-status",
+    "allow-message-store-health",
+    "allow-recover-message-store",
     "allow-open-float-chat",
     "allow-group-audit-page",
     "allow-set-member-note",
@@ -52,6 +54,7 @@
     "allow-message-page",
     "allow-message-media-action",
     "allow-chats",
+    "allow-chats-page",
     "allow-send-text",
     "allow-edit-message",
     "allow-get-settings",

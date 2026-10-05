@@ -1,6 +1,8 @@
 const COMMANDS: &[&str] = &[
     "set_native_locale",
     "database_encryption_status",
+    "message_store_health",
+    "recover_message_store",
     "open_float_chat",
     "float_context",
     "float_subscribe",
@@ -51,6 +53,7 @@ const COMMANDS: &[&str] = &[
     "messages",
     "message_page",
     "chats",
+    "chats_page",
     "resolve_names",
     "lookup_username",
     "spaces_snapshot",

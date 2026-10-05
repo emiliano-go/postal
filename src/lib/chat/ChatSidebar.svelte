@@ -9,6 +9,7 @@
   import { MEDIA_TYPES, emptyMediaOverrides } from "$lib/utils/auto-download";
   import { draftPreview } from "$lib/utils/drafts";
   import { chatListRows, type ChatListRow } from "$lib/utils/chat-list";
+  import { VList, type VListHandle } from "virtua/svelte";
   import type { MediaAutoDownload, MediaAutoDownloadOverrides } from "$lib/utils/wire";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -37,6 +38,9 @@
     searchQuery = $bindable(),
     searchResults,
     visibleChats,
+    hasMore = false,
+    loadingMore = false,
+    onloadmore = () => {},
     selectedChat,
     chatFilter,
     favoriteChats = [],
@@ -100,6 +104,9 @@
     searchQuery: string;
     searchResults: SearchResult[];
     visibleChats: ChatSummary[];
+    hasMore?: boolean;
+    loadingMore?: boolean;
+    onloadmore?: () => void;
     selectedChat: string | null;
     chatFilter: ChatFilter;
     favoriteChats?: string[];
@@ -494,6 +501,15 @@
   const displayedRows = $derived(chatListRows(
     visibleChats, currentDay, freezeOnHover && listHover ? frozenRows : [], chatFilter !== "favorites",
   ));
+  const virtualRows = $derived(displayedRows.map((row, i) => ({ ...row,
+    heading: chatFilter !== "favorites" && (i === 0 || row.group !== displayedRows[i - 1].group),
+  })));
+  let chatList = $state<VListHandle>();
+
+  function onChatScroll(offset: number) {
+    if (previewFocusFrame === undefined) hidePreview();
+    if (hasMore && !loadingMore && chatList && offset + chatList.getViewportSize() >= chatList.getScrollSize() - 200) onloadmore();
+  }
 </script>
 
 <aside class="chats" aria-label={t("nav.chats")}>
@@ -619,13 +635,14 @@
       {/each}
     </ul>
   {:else}
-  <ul onmouseenter={onListEnter} onmouseleave={onListLeave} onwheel={hidePreview}
-    onscroll={(e) => { if (e.target === e.currentTarget && previewFocusFrame === undefined) hidePreview(); }}>
-    {#each displayedRows as { chat, group }, i (chat.chat)}
-      {#if chatFilter !== "favorites" && (i === 0 || group !== displayedRows[i - 1].group)}
-        <li class="date-heading"><h2>{t(`chat.date_${group}`)}</h2></li>
+  <div class="chat-viewport" role="presentation" onmouseenter={onListEnter} onmouseleave={onListLeave} onwheel={hidePreview}>
+  <VList bind:this={chatList} role="list" data={virtualRows} getKey={(row) => row.chat.chat} bufferSize={144}
+    onscroll={onChatScroll} style="height: 100%;">
+    {#snippet children({ chat, group, heading })}
+      <div class="chat-list-entry" role="listitem">
+      {#if heading}
+        <div class="date-heading"><h2>{t(`chat.date_${group}`)}</h2></div>
       {/if}
-      <li>
         <div
           class="chat-row"
           class:active={chat.chat === selectedChat}
@@ -719,10 +736,12 @@
               }}><Icon name="pin" size={14} /></button>
           </span>
         </div>
-      </li>
-    {/each}
-    {#if displayedRows.length === 0}
-      <li class="empty">
+      </div>
+    {/snippet}
+  </VList>
+  </div>
+    {#if virtualRows.length === 0}
+      <div class="empty">
         {chatFilter === "unread"
           ? t("nav.unread_empty")
           : chatFilter === "archived"
@@ -730,9 +749,8 @@
           : chatFilter === "groups"
             ? t("nav.groups_empty")
             : t("nav.chats_empty")}
-      </li>
+      </div>
     {/if}
-  </ul>
   {/if}
 
   <NowPlaying />
@@ -1272,6 +1290,7 @@
     overflow-x: hidden;
     flex: 1;
   }
+  .chat-viewport { flex: 1; min-height: 0; overflow: hidden; }
   .date-heading {
     padding: 12px 15px 5px;
     color: var(--muted);

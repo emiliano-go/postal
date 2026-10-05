@@ -98,7 +98,10 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
 
     let (service, events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start account {account}: {e:#}");
-        CommandError::code("error.service_start_failed").with_diagnostic(e)
+        let code = if e.chain().any(|cause| cause.is::<postal_core::store::recovery::StoreIntegrityError>()) {
+            "error.message_store_corrupt"
+        } else { "error.service_start_failed" };
+        CommandError::code(code).with_diagnostic(e)
     })?;
     let service = Arc::new(service);
     *state.account_service.lock().unwrap() = Some((account.to_owned(), Arc::downgrade(&service)));
@@ -148,6 +151,7 @@ pub(crate) fn spawn_once_manager(app: &AppHandle) {
         let mut companion = CompanionState::new();
         loop {
             let state = app.state::<AppState>();
+            let transition = state.account_transition.lock().await;
             let view = observe_companion(&state).await;
             let step = companion.step(&view, std::time::Instant::now());
             if step.cancel_pairing {
@@ -169,6 +173,7 @@ pub(crate) fn spawn_once_manager(app: &AppHandle) {
                 CompanionAction::None => {}
             }
             let running = state.once_service.lock().unwrap().is_some();
+            drop(transition);
             drop(state);
             let tick = if running { ONCE_RUNNING_TICK } else { ONCE_DORMANT_TICK };
             tokio::time::timeout(tick, app.state::<AppState>().once_wake.notified())
@@ -563,6 +568,7 @@ pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> CommandResu
     })?;
     *state.once_qr.lock().unwrap() = service.current_qr();
     let service = Arc::new(service);
+    state.once_service_ever_started.store(true, Ordering::SeqCst);
     *state.once_service.lock().unwrap() = Some(service.clone());
     spawn_instance_events(app, &service, &account, events);
     Ok(())

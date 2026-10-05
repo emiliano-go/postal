@@ -8,6 +8,7 @@
   import { act, canDeleteForEveryone, canDeletePickedForEveryone, copyMessages, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, reactMessages, saveEvent, starMessages, target, viewableMessages } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { settingsSearchShortcut } from "$lib/utils/settings-search";
+  import { messageRailAction } from "$lib/utils/message-rail";
   import { invoke } from "$lib/utils/ipc";
   import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { uiError, uiMessage } from "$lib/state/localized";
@@ -19,7 +20,7 @@
   import ChatSettings from "$lib/chat/ChatSettings.svelte";
   import { bulkReadError } from "$lib/utils/bulk-chats";
   import NewGroup from "$lib/chat/NewGroup.svelte";
-  import type { ChatRetention } from "$lib/utils/models";
+  import type { ChatRetention, ChatSummary } from "$lib/utils/models";
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import MemberSheet from "$lib/contacts/MemberSheet.svelte";
   import { memberSheet } from "$lib/state/member-sheet.svelte";
@@ -51,7 +52,7 @@
   import UnifiedInbox from "$lib/chat/UnifiedInbox.svelte";
   import LabelDialog from "$lib/labels/LabelDialog.svelte";
   import { labels } from "$lib/state/labels.svelte";
-  import { desktopChatTarget, desktopUnreadCount } from "$lib/utils/desktop";
+  import { desktopChatTarget } from "$lib/utils/desktop";
   import type { InboxAction } from "$lib/utils/inbox";
   import MessageInfo from "$lib/messages/MessageInfo.svelte";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
@@ -234,16 +235,42 @@
     void keywords.revision;
     untrack(() => { if (ui.finder?.mode === "pings") void openPings(ui.finder.chat); });
   });
-  const spaceChatOrder = $derived(new Map((spaces.resolution?.chats ?? []).map((jid, index) => [jid, index])));
-  const visibleChats = $derived((spaces.account === session.activeAccount && spaces.selected.kind !== "all" && chats.chatFilter === "all" ? chats.chats : chats.visibleChats).filter((chat) => (spaces.account !== session.activeAccount || spaces.selected.kind === "all"
-    || spaces.resolution?.chats.includes(chat.chat)) && (!chats.labelFilter || labels.account === session.activeAccount && labels.chatIds(chat.chat).includes(chats.labelFilter))).map((chat) => {
+  $effect(() => {
+    const account = session.activeAccount;
+    if (!account || !session.connected) return;
+    const filter = chats.chatFilter;
+    const space = spaces.account === account && spaces.selected.kind !== "all" ? spaces.resolution?.chats ?? [] : null;
+    const label = chats.labelFilter ? labels.account === account ? labels.view.chats.filter((row) => row.label_id === chats.labelFilter).map((row) => row.chat) : [] : null;
+    const favorite = filter === "favorites" ? favorites.chats : null;
+    const scoped = [space, favorite, label].filter((list): list is string[] => list !== null);
+    const selected = scoped.length ? scoped[0].filter((jid) => scoped.every((list) => list.includes(jid))) : null;
+    untrack(() => chats.setSidebarScope(selected, !!space || !!favorite, !!space && filter === "all"));
+  });
+  const visibleChats = $derived(chats.sidebarRows.map((chat) => {
     const count = keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0;
     return count ? { ...chat, mention_count: chat.mention_count + count } : chat;
-  }).sort((a, b) => spaces.selected.kind === "all" ? 0 : (spaceChatOrder.get(a.chat) ?? Number.MAX_SAFE_INTEGER) - (spaceChatOrder.get(b.chat) ?? Number.MAX_SAFE_INTEGER)));
-  const unreadPings = $derived(chats.chats.reduce((sum, chat) => sum + chat.mention_count
-    + (keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0), 0));
-  const inboxChats = $derived(chats.chats.map((chat) => ({ ...chat, mention_count: chat.mention_count
+  }));
+  const unreadPings = $derived(chats.unreadPings + (keywords.account === session.activeAccount
+    ? Object.values(keywords.counts).reduce((sum, count) => sum + count, 0) : 0));
+  let inboxSource = $state.raw<ChatSummary[]>([]);
+  let inboxRequest = 0;
+  $effect(() => {
+    const account = session.activeAccount;
+    if (!ui.showInbox || !account) { inboxSource = []; return; }
+    const request = ++inboxRequest;
+    void chats.allChats().then((rows) => { if (ui.showInbox && session.activeAccount === account && request === inboxRequest) inboxSource = rows; })
+      .catch((error) => { if (ui.showInbox && session.activeAccount === account && request === inboxRequest) ui.fail(error); });
+  });
+  const inboxChats = $derived(inboxSource.map((chat) => ({ ...chat, mention_count: chat.mention_count
     + (keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0) })));
+  let forwardingRows = $state.raw<ChatSummary[]>([]);
+  let forwardingRequest = 0;
+  $effect(() => {
+    const account = session.activeAccount, batch = ui.forwarding, request = ++forwardingRequest;
+    if (!account || !batch) { forwardingRows = []; return; }
+    void chats.allChats().then((rows) => { if (account === session.activeAccount && ui.forwarding === batch && request === forwardingRequest) forwardingRows = rows; })
+      .catch((error) => { if (account === session.activeAccount && ui.forwarding === batch && request === forwardingRequest) ui.fail(error); });
+  });
   const labelsByChat = $derived.by(() => {
     const result: Record<string, string[]> = {};
     if (labels.account === session.activeAccount) for (const row of labels.view.chats) (result[row.chat] ??= []).push(row.label_id);
@@ -259,7 +286,7 @@
   });
   $effect(() => {
     const accountId = session.activeAccount;
-    const count = accountId ? desktopUnreadCount(chats.chats) : 0;
+    const count = accountId ? chats.sidebarTotals.desktopUnread : 0;
     const tooltip = count ? t("native.tray_unread", { count }) : t("native.tray_name");
     const badgeLabel = count ? formatNumber(count, { useGrouping: false }) : "";
     untrack(() => { void invoke("desktop_unread", { accountId, count, tooltip, badgeLabel }).catch((error) => ui.fail(error)); });
@@ -284,7 +311,15 @@
   $effect(() => { if (ui.sharingContacts && contactDialog && !contactDialog.open) contactDialog.showModal(); });
   let chatOpenSeq = 0;
   let galleryChat = $state<string | null>(null);
+  let galleryRows = $state.raw<ChatSummary[]>([]);
+  let galleryRequest = 0;
   $effect(() => { session.activeAccount; galleryChat = null; });
+  $effect(() => {
+    const account = session.activeAccount, chat = galleryChat, request = ++galleryRequest;
+    if (!account || !chat) { galleryRows = []; return; }
+    void chats.allChats().then((rows) => { if (account === session.activeAccount && chat === galleryChat && request === galleryRequest) galleryRows = rows; })
+      .catch((error) => { if (account === session.activeAccount && chat === galleryChat && request === galleryRequest) ui.fail(error); });
+  });
   onMount(() => transcription.start());
   // The composer module reads the element at event time; synced here.
   $effect(() => {
@@ -813,6 +848,12 @@
   });
 
   let visibleBoundary = $state<{ chat: string; id: string | null; account: string | null; generation: number } | null>(null);
+  $effect(() => {
+    const selected = chats.selectedChat;
+    const account = session.activeAccount;
+    const rows = chats.sidebarRows;
+    if (selected && account && session.connected && !rows.some((row) => row.chat === selected)) void chats.hydrateChat(selected);
+  });
   const latestUnread = $derived(latestUnreadCount(messages.ordered,
     visibleBoundary?.chat === chats.selectedChat && visibleBoundary.account === session.activeAccount
       && visibleBoundary.generation === messages.accountGeneration ? visibleBoundary.id : null,
@@ -1277,6 +1318,8 @@
     // clicking the field first.
     const onAnyKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || helpOpen) return;
+      const keyTarget = event.target as HTMLElement | null;
+      if (keyTarget?.closest?.(".messages") && messageRailAction(event, !!keyTarget.closest("input, textarea, select, [contenteditable='true'], [role='textbox']"), accessibility.charShortcutsEnabled)) return;
       if (ui.showSettings && settingsSearchShortcut(event)) return;
       const helpTarget = event.target as HTMLElement | null;
       if (helpShortcut(event, accessibility.charShortcutsEnabled,
@@ -1538,6 +1581,9 @@
       bind:searchQuery={chats.searchQuery}
       searchResults={spaces.selected.kind === "all" ? chats.searchResults : chats.searchResults.filter((row) => spaces.resolution?.chats.includes(row.jid))}
       {visibleChats}
+      hasMore={chats.sidebarCursor !== null}
+      loadingMore={chats.sidebarLoading}
+      onloadmore={() => void chats.loadMoreChats()}
       selectedChat={chats.selectedChat}
       chatFilter={chats.chatFilter}
       favoriteChats={favorites.chats}
@@ -1699,6 +1745,7 @@
             ui.picking = next.selected;
             ui.selectionAnchor = next.anchor;
           }}
+          onstar={(m) => starMessages([m], !messages.starred.has(m.id))}
           polls={messages.marks.polls}
           events={messages.marks.events}
           namer={(jid) => (members.isMe(jid) ? t("chat.you") : members.senderName(jid))}
@@ -1959,7 +2006,10 @@
     current={messages.reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
     onreact={(emoji) => reactMessages([m], emoji)}
     onmore={openEmojiFor}
-    onclose={() => (ui.menu = null)} />
+    onclose={() => {
+      ui.menu = null;
+      if (chats.selectedChat === m.chat) requestAnimationFrame(() => messageList?.focusRail());
+    }} />
   {/key}
 {/if}
 
@@ -2020,7 +2070,7 @@
   {@const batch = ui.forwarding}
   <ChatPicker
     title={batch.length > 1 ? t("page.forward_messages", { count: batch.length }) : t("page.forward_message")}
-    chats={chats.chats.map((c) => ({ jid: c.chat, label: chats.chatLabel(c), avatar: chats.avatars[c.chat] ?? null }))}
+    chats={forwardingRows.map((c) => ({ jid: c.chat, label: chats.chatLabel(c), avatar: chats.avatars[c.chat] ?? null }))}
     onforward={(targets) => forwardMessages(batch, targets)}
     onclose={() => (ui.forwarding = null)} />
 {/if}
@@ -2245,7 +2295,7 @@
 
 {#if galleryChat && session.activeAccount}
   {#key session.activeAccount}
-    <Gallery accountKey={session.activeAccount} chat={galleryChat} chats={chats.chats}
+    <Gallery accountKey={session.activeAccount} chat={galleryChat} chats={galleryRows}
       chatName={(chat) => chats.chatName(chat)} senderName={(message) => members.displayName(message.sender_name, message.sender)}
       onjump={jumpTo} onopen={openMedia} onclose={() => (galleryChat = null)}
       onreply={async (message) => {

@@ -12,7 +12,9 @@ use crate::message_ref::MessageFailure;
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 mod chats;
+pub use chats::ChatPage;
 mod schema;
+pub mod recovery;
 mod search_index;
 mod marks;
 pub(crate) mod broadcast_lists;
@@ -623,6 +625,7 @@ impl MessageStore {
         let conn = crate::database_crypto::open_database(path, key, rusqlite::OpenFlags::default())
             .with_context(|| format!("opening message store at {}", path.display()))?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
+        recovery::check_integrity(&conn, path)?;
 
         // WAL keeps reads from blocking the writer, which matters because
         // messages arrive while the UI is querying.

@@ -6,6 +6,7 @@ import { tick } from "svelte";
 import { invoke, log } from "$lib/utils/ipc";
 import { bare, isUnavailable } from "$lib/utils/message";
 import type { MessagePage } from "$lib/utils/message-window";
+import type { ChatSettings } from "$lib/utils/wire";
 import type { ServiceEvent, StoredMessage } from "$lib/utils/models";
 import {
   groupNotificationBody,
@@ -177,23 +178,23 @@ function isOpenChat(chat: string): boolean {
   return chat === chats.selectedChat;
 }
 
-/** The chat's mute state from the cached list; unknown chats read as unmuted. */
-function mutedUntilOf(chat: string): number {
-  return chats.chats.find((c) => c.chat === chat)?.muted_until ?? 0;
-}
-
-/** Whether the chat mutes @all mentions; unknown chats read as unmuted. */
-function muteAtAllOf(chat: string): boolean {
-  return chats.chats.find((c) => c.chat === chat)?.mute_at_all ?? false;
-}
-
-/** Effective @all mute: the chat's own mute, or the global mute-everywhere setting. */
-function muteAtAllEffective(chat: string): boolean {
-  return muteAtAllOf(chat) || (session.settings.mute_all_at_all ?? false);
+async function notificationMute(chat: string): Promise<{ mutedUntil: number; muteAtAll: boolean } | null> {
+  try {
+    const settings = await invoke<ChatSettings>("chat_settings", { chat });
+    return { mutedUntil: settings.muted_until, muteAtAll: settings.mute_at_all };
+  } catch { return null; }
 }
 
 function notificationsOn(): boolean {
   return session.settings.notifications_enabled ?? true;
+}
+
+type NotificationScope = { account: string; generation: number };
+function notificationScope(): NotificationScope | null {
+  return session.activeAccount ? { account: session.activeAccount, generation: messages.accountGeneration } : null;
+}
+function scopeCurrent(scope: NotificationScope): boolean {
+  return scope.account === session.activeAccount && scope.generation === messages.accountGeneration;
 }
 
 /** Sender name for a notification, preferring the stored push name. */
@@ -211,25 +212,27 @@ function notifyChatName(chat: string): string {
 }
 
 /** Shows a notification for a fully loaded message, when the gate allows it. */
-function notifyForMessage(message: StoredMessage, fresh: boolean) {
+async function notifyForMessage(message: StoredMessage, fresh: boolean, mute?: { mutedUntil: number; muteAtAll: boolean }, scope = notificationScope()) {
   const chat = message.chat;
-  const account = session.activeAccount;
-  if (!account) return;
-  const generation = messages.accountGeneration;
-  const current = () => account === session.activeAccount && generation === messages.accountGeneration
+  if (!scope || !scopeCurrent(scope) || !fresh || !notificationsOn() || isOpenChat(chat)) return;
+  const { account } = scope;
+  mute ??= await notificationMute(chat) ?? undefined;
+  if (!mute) return;
+  const notificationSettings = mute;
+  const current = () => scopeCurrent(scope)
     && !message.deleted && keywords.account === account && !keywords.hidden(message)
     && shouldNotify(
       {
         fromMe: message.from_me,
         systemKind: message.system_kind,
         revoked: message.revoked,
-        mutedUntil: mutedUntilOf(chat),
+        mutedUntil: notificationSettings.mutedUntil,
         notificationsEnabled: notificationsOn(),
         fresh,
         isOpenChat: isOpenChat(chat),
         sentAt: message.timestamp,
         mentionedAllOnly: message.mentioned_all_only,
-        muteAtAll: muteAtAllEffective(chat),
+        muteAtAll: notificationSettings.muteAtAll || (session.settings.mute_all_at_all ?? false),
       },
     );
   if (!current()) return;
@@ -257,16 +260,15 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
  * notification text. Best-effort: a failed fetch falls back to a generic
  * ping, and a muted or globally silenced chat stays silent either way.
  */
-async function notifyForHint(chat: string, id: string, fresh: boolean) {
-  if (!fresh || !notificationsOn()) return;
+async function notifyForHint(chat: string, id: string, fresh: boolean, scope = notificationScope()) {
+  if (!scope || !scopeCurrent(scope) || !fresh || !notificationsOn()) return;
   if (isOpenChat(chat)) return;
-  if (isChatMuted(mutedUntilOf(chat))) return;
+  const { account } = scope;
+  const mute = await notificationMute(chat);
+  if (!mute || !scopeCurrent(scope) || isChatMuted(mute.mutedUntil)) return;
   // A chat muting @all still pings for direct mentions; the fetched row
   // decides. The pre-fetch gate only skips when the mute state is already
   // known to silence everything, which an @all mute alone does not.
-  const account = session.activeAccount;
-  if (!account) return;
-  const generation = messages.accountGeneration;
   let message: StoredMessage | null = null;
   try {
     const page = await invoke<MessagePage>("message_page", {
@@ -279,20 +281,34 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
   } catch {
     message = null;
   }
-  if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
+  if (!scopeCurrent(scope)) return;
+  const currentMute = await notificationMute(chat);
+  if (!currentMute || !scopeCurrent(scope) || isChatMuted(currentMute.mutedUntil)) return;
   if (message) {
-    notifyForMessage(message, true);
+    await notifyForMessage(message, true, currentMute, scope);
     return;
   }
   // Re-check after the fetch: the chat may have been opened, muted or
   // silenced while it was in flight.
-  if (!notificationsOn() || isOpenChat(chat) || isChatMuted(mutedUntilOf(chat))) return;
+  if (!notificationsOn() || isOpenChat(chat)) return;
   // The row is not on this device yet; still ping with the chat name.
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
   showChatNotification(chatName, isGroup ? t("state.new_message") : t("state.new_message_from", { name: chatName }), chat, account,
-    () => account === session.activeAccount && generation === messages.accountGeneration
-      && notificationsOn() && !isOpenChat(chat) && !isChatMuted(mutedUntilOf(chat)));
+    () => scopeCurrent(scope) && notificationsOn() && !isOpenChat(chat) && !isChatMuted(currentMute.mutedUntil));
+}
+
+const notificationQueues = new Map<string, Promise<void>>();
+function queueNotification(work: (scope: NotificationScope) => Promise<void>) {
+  const scope = notificationScope();
+  if (!scope) return;
+  const key = `${scope.account}\0${scope.generation}`;
+  const previous = notificationQueues.get(key) ?? Promise.resolve();
+  const run = () => scopeCurrent(scope) ? work(scope) : Promise.resolve();
+  const next = previous.then(run, run);
+  notificationQueues.set(key, next);
+  void next.then(() => { if (notificationQueues.get(key) === next) notificationQueues.delete(key); },
+    () => { if (notificationQueues.get(key) === next) notificationQueues.delete(key); });
 }
 
 /** When each unnamed group's subject was last asked for; the core backs off failed ones. */
@@ -425,8 +441,8 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       // took the deferred path above, so it never pings; muted chats and
       // the global toggle are gated inside the helpers.
       if (fresh && !fromMe) {
-        if (payload.kind === "message") notifyForMessage(payload.message, true);
-        else void notifyForHint(chat, payload.id, true);
+        if (payload.kind === "message") queueNotification((scope) => notifyForMessage(payload.message, true, undefined, scope));
+        else queueNotification((scope) => notifyForHint(chat, payload.id, true, scope));
         // Screen-reader announcement (WCAG 4.1.3), suppressed during the
         // initial sync backlog via the gate signal.
         try {

@@ -37,7 +37,7 @@ pub use service::{
 };
 pub use store::{
     BroadcastList,
-    ChatMarks, ChatRetention, ChatSummary, MessageReceipt, MessageStore, NewEvent, DiskRetention, RetentionLimit, StoredMessage,
+    ChatMarks, ChatPage, ChatRetention, ChatSummary, MessageReceipt, MessageStore, NewEvent, DiskRetention, RetentionLimit, StoredMessage,
     ViewOnce, Sticker, StickerPack,
 };
 

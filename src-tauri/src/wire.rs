@@ -36,6 +36,8 @@ pub fn wire_types() -> String {
         crate::connection::ConnectionState, crate::connection::OnceState,
         postal_core::message_ref::MessageRef, crate::command_error::CommandError,
         crate::database_encryption::DatabaseEncryptionStatus,
+        crate::message_store_recovery::MessageStoreHealth,
+        crate::message_store_recovery::MessageStoreRecovery,
         crate::floating::FloatContext,
         crate::chats::ChatSettings, crate::groups::Joined, crate::plugins::PluginsView,
         crate::messages::Target, crate::media_actions::MediaAction, crate::polls::EventForm,

@@ -20,6 +20,7 @@ mod connection;
 mod command_error;
 mod database_keys;
 mod database_encryption;
+mod message_store_recovery;
 mod native_locale;
 mod settings;
 mod chats;
@@ -83,6 +84,7 @@ struct AppState {
     service: Mutex<Option<Arc<WhatsAppService>>>,
     /// The optional Android instance, running beside the main service.
     once_service: Mutex<Option<Arc<WhatsAppService>>>,
+    once_service_ever_started: std::sync::atomic::AtomicBool,
     /// Its pairing code while it waits to be linked.
     once_qr: Mutex<Option<String>>,
     once_connected: std::sync::atomic::AtomicBool,
@@ -118,6 +120,8 @@ macro_rules! postal_commands {
     () => {
         tauri::generate_handler![
             database_encryption::database_encryption_status,
+            message_store_recovery::message_store_health,
+            message_store_recovery::recover_message_store,
             native_locale::set_native_locale,
             floating::open_float_chat,
             floating::float_context,
@@ -149,6 +153,7 @@ macro_rules! postal_commands {
             messages::messages,
             messages::message_page,
             chats::chats,
+            chats::chats_page,
             contacts::resolve_names,
             usernames::lookup_username,
             spaces::spaces_snapshot,
@@ -452,6 +457,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         account_service: Mutex::new(None),
         service: Mutex::new(None),
         once_service: Mutex::new(None),
+        once_service_ever_started: std::sync::atomic::AtomicBool::new(false),
         once_qr: Mutex::new(None),
         once_connected: std::sync::atomic::AtomicBool::new(false),
         once_pairing: std::sync::atomic::AtomicBool::new(false),
