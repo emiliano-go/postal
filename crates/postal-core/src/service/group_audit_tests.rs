@@ -1,6 +1,52 @@
 use super::*;
 use whatsapp_rust::wacore::stanza::groups::GroupParticipantInfo;
 
+#[tokio::test]
+async fn hundred_thousand_audit_rows_release_worker_for_live_insert() {
+    let root = std::env::temp_dir().join(format!("postal-audit-large-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let store = StoreWorker::open(&root.join("messages.db")).await.unwrap();
+    store.run(|store| store.with_test_connection(|conn| {
+        let tx = conn.transaction()?;
+        let mut insert = tx.prepare("INSERT INTO group_audit
+            (chat, event_key, kind, target, observed_at, source)
+            VALUES ('1@g.us', ?1, 'join', '', ?2, 'stored')")?;
+        for index in 0..100_000 { insert.execute(rusqlite::params![index.to_string(), index])?; }
+        drop(insert);
+        tx.commit()?;
+        Ok(())
+    })).await.unwrap();
+    let (first_tx, first_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let reporting = store.clone();
+    let report = tokio::spawn(async move {
+        let mut pause = Some((first_tx, release_rx));
+        group_audit_page_paged_with(&reporting, None, GroupAuditFilter::default(), move |phase, _| {
+            let pause = if phase == "page" { pause.take() } else { None };
+            async move { if let Some((first, release)) = pause { let _ = first.send(()); let _ = release.await; } }
+        }).await
+    });
+    tokio::time::timeout(Duration::from_secs(10), first_rx).await.unwrap().unwrap();
+    let started = std::time::Instant::now();
+    let writer = store.clone();
+    tokio::time::timeout(Duration::from_secs(5), writer.run(|store| store.with_test_connection(|conn| {
+        conn.execute("INSERT INTO group_audit
+            (chat, event_key, kind, target, observed_at, source)
+            VALUES ('1@g.us', 'live', 'join', '', 1000000, 'stored')", [])?;
+        Ok(())
+    }))).await.unwrap().unwrap();
+    eprintln!("audit live insert during paused report: {:?}", started.elapsed());
+    release_tx.send(()).unwrap();
+    let page = tokio::time::timeout(Duration::from_secs(60), report).await.unwrap().unwrap().unwrap();
+    assert_eq!(page.entries.len(), 100);
+    assert_eq!(page.entries[0].id, 100_000);
+    assert!(page.has_more);
+    drop(writer);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn update(action: Action) -> GroupUpdate {
     GroupUpdate::builder().group_jid("1@g.us".parse().unwrap()).notification_id("notice".into())
         .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(200)).into())

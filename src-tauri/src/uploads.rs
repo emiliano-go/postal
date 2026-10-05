@@ -38,8 +38,8 @@ struct Pending {
 pub(crate) struct Uploads(Mutex<Pending>);
 
 impl Pending {
-    fn expire(&mut self) {
-        self.entries.retain(|_, file| file.touched.elapsed() < std::time::Duration::from_secs(3600));
+    fn expire(&mut self, now: std::time::Instant) {
+        self.entries.retain(|_, file| now.saturating_duration_since(file.touched) < std::time::Duration::from_secs(3600));
     }
 }
 
@@ -52,7 +52,7 @@ impl Uploads {
         media_dir: Option<&Path>, available: impl Fn(&Path) -> std::io::Result<u64>) -> CommandResult<String> {
         if name.is_empty() || name.len() > 1024 { return Err(CommandError::code("error.upload_name_invalid")); }
         let mut pending = self.0.lock().unwrap();
-        pending.expire();
+        pending.expire(std::time::Instant::now());
         if pending.entries.len() >= MAX_PENDING_ATTACHMENTS { return Err(CommandError::new(MessageRef::new("error.upload_pending_limit").with_param("max_items", serde_json::Number::from(MAX_PENDING_ATTACHMENTS)))); }
         fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let root = root.canonicalize().map_err(|e| e.to_string())?;
@@ -90,7 +90,7 @@ impl Uploads {
     fn append(&self, owner: &str, token: &str, offset: u64, bytes: &[u8]) -> CommandResult<()> {
         if bytes.len() > CHUNK_BYTES { return Err(CommandError::new(MessageRef::new("error.upload_chunk_limit").with_param("max_bytes", serde_json::Number::from(CHUNK_BYTES)))); }
         let mut pending = self.0.lock().unwrap();
-        pending.expire();
+        pending.expire(std::time::Instant::now());
         let file = pending.entries.get_mut(token).ok_or_else(|| CommandError::code("error.upload_unknown"))?;
         if file.owner != owner { return Err(CommandError::code("error.upload_account_mismatch")); }
         if file.written != offset || offset.checked_add(bytes.len() as u64).is_none_or(|end| end > file.size) {
@@ -106,7 +106,7 @@ impl Uploads {
 
     pub(crate) fn take(&self, owner: &str, token: &str) -> CommandResult<StagedUpload> {
         let mut pending = self.0.lock().unwrap();
-        pending.expire();
+        pending.expire(std::time::Instant::now());
         let file = pending.entries.get(token).ok_or_else(|| CommandError::code("error.upload_unknown"))?;
         if file.owner != owner { return Err(CommandError::code("error.upload_account_mismatch")); }
         if file.written != file.size || fs::metadata(&file.path).map_err(|e| e.to_string())?.len() != file.size {
@@ -120,7 +120,7 @@ impl Uploads {
             return Err(CommandError::new(MessageRef::new("error.upload_batch_limit").with_param("max_items", serde_json::Number::from(MAX_PENDING_ATTACHMENTS))));
         }
         let mut pending = self.0.lock().unwrap();
-        pending.expire();
+        pending.expire(std::time::Instant::now());
         for (index, token) in tokens.iter().enumerate() {
             if tokens[..index].contains(token) { return Err(CommandError::code("error.upload_duplicate")); }
             let file = pending.entries.get(token).ok_or_else(|| CommandError::code("error.upload_unknown"))?;
@@ -286,7 +286,7 @@ mod tests {
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         for _ in 0..8 { uploads.begin(&root, "one".into(), "pending.bin".into(), 1, None).unwrap(); }
         assert!(uploads.begin(&root, "one".into(), "overflow.bin".into(), 1, None).is_err());
-        for file in uploads.0.lock().unwrap().entries.values_mut() { file.touched -= std::time::Duration::from_secs(3601); }
+        uploads.0.lock().unwrap().expire(std::time::Instant::now() + std::time::Duration::from_secs(3601));
         let empty = uploads.begin(&root, "one".into(), "empty.bin".into(), 0, None).unwrap();
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
         drop(uploads.take("one", &empty).unwrap());

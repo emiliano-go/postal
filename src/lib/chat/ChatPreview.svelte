@@ -2,16 +2,15 @@
   import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { t } from "$lib/i18n/localizer";
   import type { StoredMessage } from "$lib/utils/models";
-  import { isUnavailable } from "$lib/utils/message";
-  import { floatContent as previewContent } from "$lib/utils/float-chat";
-  export { previewContent };
+  import { floatContent as previewContent, previewCanViewMedia } from "$lib/utils/float-chat";
+  export { previewContent, previewCanViewMedia };
 </script>
 
 <script lang="ts">
   import { tick } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
-  import MediaViewer, { mediaSrc, type ViewerItem } from "$lib/media/MediaViewer.svelte";
+  import MediaViewer, { mediaSrc, type MediaViewerAction, type ViewerItem } from "$lib/media/MediaViewer.svelte";
   import type { MessagePage } from "$lib/utils/message-window";
   import { cursorOf } from "$lib/utils/message-window";
   import { dayKey, dayLabel, formatTime } from "$lib/utils/message";
@@ -109,12 +108,7 @@
 
   /** Local images, videos and GIFs the built-in viewer can page through. */
   const viewable = $derived(
-    (rows ?? []).filter(
-      (message) =>
-        !isUnavailable(message) &&
-        !!message.media_path &&
-        (message.media_kind === "image" || message.media_kind === "video" || message.media_kind === "gif"),
-    ),
+    (rows ?? []).filter(previewCanViewMedia),
   );
   const viewerItems = $derived(viewable.map(viewerItem));
   const viewerIndex = $derived(viewerId ? viewable.findIndex((message) => message.id === viewerId) : -1);
@@ -126,7 +120,7 @@
       path: message.media_path!,
       thumb: message.media_thumb,
       kind: message.media_kind!,
-      caption: content.text || content.media || "",
+      caption: content.text || "",
       author: message.from_me ? t("chat.you") : displayName(message.sender_name, message.sender),
       avatar: null,
       timestamp: message.timestamp,
@@ -162,6 +156,13 @@
     } catch (e) {
       ui.fail(e);
     }
+  }
+
+  async function actOnViewerMedia(id: string, action: MediaViewerAction) {
+    const message = rows?.find((entry) => entry.id === id);
+    if (!message) return;
+    try { await invoke("message_media_action", { chat: message.chat, id: message.id, action }); }
+    catch (e) { viewerId = null; error = normalizeError(e); }
   }
 </script>
 
@@ -294,6 +295,7 @@
     index={viewerIndex}
     onclose={() => (viewerId = null)}
     onopen={(path) => void openExternal(path)}
+    onmediaaction={actOnViewerMedia}
     onreply={() => {}}
     onjump={() => {}} />
 {/if}

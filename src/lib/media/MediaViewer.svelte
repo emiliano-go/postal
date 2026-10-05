@@ -10,7 +10,7 @@
     path: string;
     thumb: string | null;
     kind: string;
-    caption: string;
+    caption?: string;
     author: string;
     avatar: string | null;
     timestamp: number;
@@ -19,19 +19,24 @@
 
 <script lang="ts">
   import { t } from "$lib/i18n/localizer";
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { fade } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
   import { backgroundPress } from "$lib/utils/press";
+  import { accessibility } from "$lib/utils/accessibility.svelte";
+  import { mediaViewerKey, nextSlideshowIndex } from "$lib/utils/media-viewer";
   import Icon from "$lib/ui/Icon.svelte";
   import VideoPlayer from "$lib/media/VideoPlayer.svelte";
   import AudioPlayer from "$lib/media/AudioPlayer.svelte";
+
+  export type MediaViewerAction = Exclude<import("$lib/utils/wire").MediaAction, "open">;
 
   let {
     items,
     index = $bindable(),
     onclose,
     onopen,
+    onmediaaction,
     onreply,
     onjump,
   }: {
@@ -40,6 +45,8 @@
     onclose: () => void;
     /** Opens the file in the desktop's own viewer; absent for view-once media. */
     onopen?: (path: string) => void;
+    /** Saves the current item or copies image pixels; absent for view-once media. */
+    onmediaaction?: (id: string, action: MediaViewerAction) => void;
     onreply: (id: string) => void;
     onjump: (id: string) => void;
   } = $props();
@@ -47,15 +54,47 @@
   const item = $derived(items[index]);
   const isVideo = $derived(item?.kind === "video" || item?.kind === "gif" || item?.kind === "round_video");
   const isAudio = $derived(item?.kind === "audio");
+  const isImage = $derived(item?.kind === "image" || item?.kind === "sticker");
+  const canSave = $derived(!!onmediaaction && !isAudio);
+  const canSlideshow = $derived(!isAudio && items.filter((entry) => entry.kind !== "audio").length > 1);
 
   let zoom = $state(1);
   let pan = $state({ x: 0, y: 0 });
+  let slideshow = $state(false);
+  let osReducedMotion = $state(typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const reducedMotion = $derived(accessibility.reduceMotion === "on" ||
+    accessibility.reduceMotion === "system" && osReducedMotion);
   let dragging: { x: number; y: number; moved: boolean } | null = null;
   /** Everything but the media and the chrome is background: the letterbox, the header, the caption, the strip's gaps. */
   const dismiss = backgroundPress(
     (target) => target instanceof Element && !target.closest(".media, .player, .who, button"),
   );
   let strip: HTMLDivElement | undefined = $state();
+  let viewer: HTMLDivElement | undefined = $state();
+
+  onMount(() => {
+    const query = matchMedia("(prefers-reduced-motion: reduce)");
+    const updateMotion = () => (osReducedMotion = query.matches);
+    const onVisibility = () => { if (document.hidden) slideshow = false; };
+    query.addEventListener("change", updateMotion);
+    document.addEventListener("visibilitychange", onVisibility);
+    viewer?.focus();
+    return () => {
+      query.removeEventListener("change", updateMotion);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  });
+
+  $effect(() => { if (reducedMotion) slideshow = false; });
+  $effect(() => {
+    if (!slideshow || reducedMotion || !canSlideshow) return;
+    const timer = setInterval(() => {
+      const next = nextSlideshowIndex(items, index, reducedMotion);
+      if (next === null) slideshow = false;
+      else index = next;
+    }, 3000);
+    return () => clearInterval(timer);
+  });
 
   $effect(() => {
     // Every new item starts unzoomed and centred.
@@ -72,17 +111,34 @@
     if (next >= 0 && next < items.length) index = next;
   }
 
+  function pauseSlideshow() { slideshow = false; }
+
+  function mediaAction(action: MediaViewerAction) {
+    pauseSlideshow();
+    if (item) onmediaaction?.(item.id, action);
+  }
+
   function setZoom(next: number) {
     zoom = Math.min(5, Math.max(1, next));
     if (zoom === 1) pan = { x: 0, y: 0 };
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") onclose();
-    else if (e.key === "ArrowLeft") step(-1);
-    else if (e.key === "ArrowRight") step(1);
-    else if (e.key === "+" || e.key === "=") setZoom(zoom + 0.5);
-    else if (e.key === "-") setZoom(zoom - 0.5);
+    if (e.defaultPrevented || e.isComposing) return;
+    const target = e.target instanceof Element ? e.target : null;
+    const activatingSlideshow = target?.closest("[data-slideshow-toggle]") && (e.key === "Enter" || e.key === " ");
+    if (!activatingSlideshow && e.key !== "Control" && e.key !== "Alt" && e.key !== "Shift" && e.key !== "Meta") pauseSlideshow();
+    if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey) { onclose(); return; }
+    if (target?.closest(".player, input, textarea, select, [contenteditable='true']")) return;
+    const action = mediaViewerKey(e, canSave);
+    if (!action) return;
+    e.preventDefault();
+    if (action === "previous") step(-1);
+    else if (action === "next") step(1);
+    else if (action === "zoom-in") setZoom(zoom + 0.5);
+    else if (action === "zoom-out") setZoom(zoom - 0.5);
+    else if (action === "zoom-reset") setZoom(1);
+    else mediaAction("save");
   }
 
   function onPointerDown(e: PointerEvent) {
@@ -119,13 +175,18 @@
 {#if item}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
   <div
+    bind:this={viewer}
     class="viewer"
     role="dialog"
     aria-modal="true"
     aria-label={t("content.media_viewer")}
     tabindex="-1"
     transition:fade={{ duration: motion(140) }}
-    onpointerdown={dismiss.down}
+    onpointerdown={(e) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target?.closest("[data-slideshow-toggle]")) pauseSlideshow();
+      dismiss.down(e);
+    }}
     onclick={(e) => dismiss.click(e) && onclose()}>
     <header>
       <div class="who">
@@ -145,28 +206,49 @@
             ><Icon name="zoomOut" size={20} /></button>
           <button class="tool" title={t("content.zoom_in")} aria-label={t("content.zoom_in")} disabled={zoom === 5} onclick={() => setZoom(zoom + 0.5)}
             ><Icon name="zoomIn" size={20} /></button>
+          {#if zoom > 1}
+            <button class="tool" title={t("content.reset_zoom")} aria-label={t("content.reset_zoom")} onclick={() => setZoom(1)}
+              ><Icon name="zoomOut" size={20} /></button>
+          {/if}
         {/if}
-        <button class="tool" title={t("content.go_to_message")} aria-label={t("content.go_to_message")} onclick={() => onjump(item.id)}
+        {#if canSlideshow}
+          <button class="tool" title={t(slideshow ? "content.pause_slideshow" : "content.start_slideshow")}
+            aria-label={t(slideshow ? "content.pause_slideshow" : "content.start_slideshow")}
+            data-slideshow-toggle
+            aria-pressed={slideshow} disabled={reducedMotion}
+            onclick={() => { if (reducedMotion) return; slideshow = !slideshow; }}
+            ><Icon name={slideshow ? "pause" : "play"} size={20} /></button>
+        {/if}
+        {#if canSave && isImage}
+          <button class="tool" title={t("page.menu.copy_image")} aria-label={t("page.menu.copy_image")} onclick={() => mediaAction("copy_image")}
+            ><Icon name="copy" size={20} /></button>
+          <button class="tool" title={t("page.menu.save_image")} aria-label={t("page.menu.save_image")} onclick={() => mediaAction("save")}
+            ><Icon name="download" size={20} /></button>
+        {:else if canSave && (isVideo || item.kind === "document")}
+          <button class="tool" title={t("content.download")} aria-label={t("content.download")} onclick={() => mediaAction("save")}
+            ><Icon name="download" size={20} /></button>
+        {/if}
+        <button class="tool" title={t("content.go_to_message")} aria-label={t("content.go_to_message")} onclick={() => { pauseSlideshow(); onjump(item.id); }}
           ><Icon name="message" size={20} /></button>
-        <button class="tool" title={t("content.reply")} aria-label={t("content.reply")} onclick={() => onreply(item.id)}
+        <button class="tool" title={t("content.reply")} aria-label={t("content.reply")} onclick={() => { pauseSlideshow(); onreply(item.id); }}
           ><Icon name="reply" size={20} /></button>
         {#if onopen}
-          <button class="tool" title={t("content.open_in_default_app")} aria-label={t("content.open_in_default_app")} onclick={() => onopen(item.path)}
+          <button class="tool" title={t("content.open_in_default_app")} aria-label={t("content.open_in_default_app")} onclick={() => { pauseSlideshow(); onopen(item.path); }}
             ><Icon name="external" size={20} /></button>
         {/if}
-        <button class="tool" title={t("content.close_esc")} aria-label={t("content.close")} onclick={onclose}><Icon name="x" size={22} /></button>
+        <button class="tool" title={t("content.close_esc")} aria-label={t("content.close")} onclick={() => { pauseSlideshow(); onclose(); }}><Icon name="x" size={22} /></button>
       </div>
     </header>
 
     <div class="stage">
-      <button class="nav prev" aria-label={t("content.previous")} disabled={index === 0} onclick={() => step(-1)}>
+      <button class="nav prev" aria-label={t("content.previous")} disabled={index === 0} onclick={() => { pauseSlideshow(); step(-1); }}>
         <Icon name="chevronLeft" size={26} />
       </button>
 
       {#key item.id}
         {#if isVideo}
           <VideoPlayer
-            src={convertFileSrc(item.path)}
+            src={mediaSrc(item.path)}
             path={item.path}
             gif={item.kind === "gif"}
             round={item.kind === "round_video"} />
@@ -177,26 +259,27 @@
           <img
             class="media"
             class:zoomed={zoom > 1}
-            src={convertFileSrc(item.path)}
-            alt={item.caption}
+            src={mediaSrc(item.path)}
+            alt={item.caption ?? ""}
             draggable="false"
             style="transform: translate({pan.x}px, {pan.y}px) scale({zoom})"
             onpointerdown={onPointerDown}
             onpointermove={onPointerMove}
             onpointerup={onPointerUp}
             onwheel={(e) => {
+              pauseSlideshow();
               e.preventDefault();
               setZoom(zoom + (e.deltaY < 0 ? 0.25 : -0.25));
             }} />
         {/if}
       {/key}
 
-      <button class="nav next" aria-label={t("content.next")} disabled={index === items.length - 1} onclick={() => step(1)}>
+        <button class="nav next" aria-label={t("content.next")} disabled={index === items.length - 1} onclick={() => { pauseSlideshow(); step(1); }}>
         <Icon name="chevronRight" size={26} />
       </button>
     </div>
 
-    {#if item.caption}
+    {#if item.caption?.trim()}
       <p class="caption"><bdi dir="auto">{item.caption}</bdi></p>
     {/if}
 
@@ -206,7 +289,7 @@
           class="thumb"
           class:active={i === index}
           aria-label={t("content.viewer_item", { index: i + 1, count: items.length })}
-          onclick={() => (index = i)}>
+          onclick={() => { pauseSlideshow(); index = i; }}>
           {#if entry.thumb || !(entry.kind === "video" || entry.kind === "gif" || entry.kind === "round_video")}
             <img src={mediaSrc(entry.thumb ?? entry.path)} alt="" />
           {:else}

@@ -304,12 +304,14 @@ export async function deleteSelected(everyone: boolean) {
 export function viewableMessages(
   ordered: StoredMessage[],
   viewOnce: Set<string>,
+  revealedSpoilers: ReadonlySet<string> = new Set(),
 ): StoredMessage[] {
   return ordered.filter(
     (m) =>
       !isUnavailable(m) &&
       !!m.media_path &&
       !viewOnce.has(m.id) &&
+      (!m.spoiler || revealedSpoilers.has(m.id)) &&
       (m.media_kind === "image" || m.media_kind === "video" || m.media_kind === "gif"),
   );
 }

@@ -6,7 +6,7 @@
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
   import { MEDIA_LABELS } from "$lib/utils/message";
-  import MediaViewer, { mediaSrc } from "$lib/media/MediaViewer.svelte";
+  import MediaViewer, { mediaSrc, type MediaViewerAction } from "$lib/media/MediaViewer.svelte";
   import { GalleryState } from "$lib/state/gallery.svelte";
   import { galleryDateRange, galleryKey, galleryUrl, galleryViewerItems, galleryVisible } from "$lib/utils/gallery";
   import type { ChatSummary, GalleryCursor, GalleryFilter, GalleryItem, GalleryKind, GalleryPage, StoredMessage } from "$lib/utils/wire";
@@ -85,6 +85,13 @@
     const item = gallery.items.find(({ message }) => galleryKey(message) === id);
     viewerIndex = null;
     if (item) { onclose(); onreply(item.message); }
+  }
+
+  async function actOnViewerMedia(id: string, action: MediaViewerAction) {
+    const message = gallery.items.find(({ message }) => galleryKey(message) === id)?.message;
+    if (!message) return;
+    try { await invoke("message_media_action", { chat: message.chat, id: message.id, action }); openError = null; }
+    catch (error) { viewerIndex = null; openError = normalizeError(error); }
   }
 
   async function openLink(url: string) {
@@ -177,7 +184,8 @@
 </section>
 
 {#if viewerIndex !== null}
-  <MediaViewer items={viewerItems} bind:index={viewerIndex} onclose={() => viewerIndex = null} onopen={onopen} onjump={jumpViewer} onreply={replyViewer} />
+  <MediaViewer items={viewerItems} bind:index={viewerIndex} onclose={() => viewerIndex = null} onopen={onopen}
+    onmediaaction={actOnViewerMedia} onjump={jumpViewer} onreply={replyViewer} />
 {/if}
 
 <style>

@@ -6,6 +6,11 @@ import { captionOf, MEDIA_LABELS, CARD_LABELS } from "./message.ts";
 
 export const FLOAT_HISTORY_LIMIT = 500;
 
+export function previewCanViewMedia(message: Pick<StoredMessage, "media_kind" | "media_path" | "media_once_kind" | "spoiler" | "deleted" | "revoked" | "system_kind">) {
+  return !!message.media_path && !message.media_once_kind && !message.deleted && !message.revoked && !message.spoiler &&
+    message.system_kind !== "UNAVAILABLE_MESSAGE" && ["image", "video", "gif"].includes(message.media_kind ?? "");
+}
+
 export function floatContent(message: StoredMessage) {
   if (message.system_kind === "UNAVAILABLE_MESSAGE") return { text: `${t("message.unavailable")}. ${t("message.unavailable_explanation")}`, media: null, notice: true };
   if (message.deleted || message.revoked) return { text: t("message.deleted"), media: null, notice: true };

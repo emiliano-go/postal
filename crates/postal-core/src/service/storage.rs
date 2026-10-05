@@ -105,8 +105,14 @@ fn files_under(root: &Path) -> Result<HashMap<PathBuf, u64>> {
     Ok(files)
 }
 
+#[cfg(test)]
 pub(super) fn storage_report(store: &MessageStore, directory: &Path) -> Result<StorageReport> {
-    let mut report = StorageReport { database_bytes: store.database_bytes()?, attachment_bytes: 0,
+    storage_report_from(store.database_bytes()?, store.chat_names()?, store.media_entries()?, directory)
+}
+
+fn storage_report_from(database_bytes: u64, names: Vec<(String, Option<String>)>,
+    mut entries: Vec<crate::store::storage::MediaEntry>, directory: &Path) -> Result<StorageReport> {
+    let mut report = StorageReport { database_bytes, attachment_bytes: 0,
         cache_bytes: 0, other_bytes: 0, total_files: 0, chats: vec![], files: vec![] };
     let root = match directory.canonicalize() {
         Ok(root) => Some(root),
@@ -115,10 +121,11 @@ pub(super) fn storage_report(store: &MessageStore, directory: &Path) -> Result<S
     };
     let physical = match &root { Some(root) => files_under(root)?, None => HashMap::new() };
     let mut owned = HashSet::new();
-    let mut by_chat: BTreeMap<String, ChatStorage> = store.chat_names()?.into_iter()
+    let mut by_chat: BTreeMap<String, ChatStorage> = names.into_iter()
         .map(|(chat, name)| (chat.clone(), ChatStorage { chat, name, ..Default::default() })).collect();
     let mut counted = HashSet::new();
-    for entry in store.media_entries()? {
+    entries.sort_by_key(|entry| entry.quoted);
+    for entry in entries {
         let path = canonical_file(Path::new(&entry.path))?;
         let bytes = path.as_ref().and_then(|p| physical.get(p)).copied();
         let kind = match entry.kind.as_str() { "gif" | "video" => "video", "sticker" | "image" => "image",
@@ -210,11 +217,38 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
     Ok(result)
 }
 
+async fn storage_report_paged(store: &StoreWorker, directory: PathBuf, chat: Option<String>,
+    order: StorageOrder, offset: usize) -> Result<StorageReport> {
+    storage_report_paged_with(store, directory, chat, order, offset, |_| async {}).await
+}
+
+async fn storage_report_paged_with<F, Fut>(store: &StoreWorker, directory: PathBuf, chat: Option<String>,
+    order: StorageOrder, offset: usize, mut after_page: F) -> Result<StorageReport>
+where F: FnMut(i64) -> Fut, Fut: std::future::Future<Output = ()> {
+    let (database_bytes, names, upper) = store.run(|store| {
+        Ok((store.database_bytes()?, store.chat_names()?, store.max_message_rowid()?))
+    }).await?;
+    // The rowid ceiling excludes later inserts; edits to earlier rows can still appear.
+    let mut entries = Vec::new();
+    let mut after = 0;
+    while after < upper {
+        let (next, mut page) = store.run(move |store| store.media_entries_page(after, upper)).await?;
+        if next == after { break; }
+        after = next;
+        entries.append(&mut page);
+        after_page(after).await;
+        tokio::task::yield_now().await;
+    }
+    Ok(tokio::task::spawn_blocking(move ||
+        storage_report_from(database_bytes, names, entries, &directory)
+            .map(|report| report.page(chat.as_deref(), order, offset))).await??)
+}
+
 impl WhatsAppService {
     pub async fn storage_report(&self, chat: Option<&str>, order: StorageOrder, offset: usize) -> Result<StorageReport> {
         let directory = self.media_dir.clone().ok_or_else(|| anyhow::anyhow!(crate::message_ref::MessageRef::new("error.media_directory_missing")))?;
         let chat = chat.map(str::to_owned);
-        self.store.run(move |store| Ok(storage_report(store, &directory)?.page(chat.as_deref(), order, offset))).await
+        storage_report_paged(&self.store, directory, chat, order, offset).await
     }
 
     pub async fn cleanup_storage(&self, action: StorageCleanup) -> Result<CleanupResult> {
@@ -231,6 +265,97 @@ impl WhatsAppService {
 mod tests {
     use super::*;
     use buffa::Message as _;
+
+    #[tokio::test]
+    async fn paged_report_keeps_normal_media_before_earlier_quote_for_shared_path() {
+        let root = std::env::temp_dir().join(format!("postal-storage-order-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let media = root.join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        let file = media.join("shared.bin");
+        std::fs::write(&file, [1u8; 7]).unwrap();
+        let path = file.to_string_lossy().into_owned();
+        let store = StoreWorker::open(&root.join("messages.db")).await.unwrap();
+        store.run(move |store| {
+            let mut quoted = StoredMessage::default();
+            quoted.header.chat = "a@s".into();
+            quoted.header.id = "earlier".into();
+            quoted.header.timestamp = 1;
+            quoted.quote.kind = Some("document".into());
+            quoted.quote.path = Some(path.clone());
+            store.insert_message(&quoted)?;
+            let mut normal = StoredMessage::default();
+            normal.header.chat = "a@s".into();
+            normal.header.id = "later".into();
+            normal.header.timestamp = 2;
+            normal.media.kind = Some("image".into());
+            normal.media.path = Some(path);
+            store.insert_message(&normal)?;
+            Ok(())
+        }).await.unwrap();
+        let old_media = media.clone();
+        let old = store.run(move |store| Ok(storage_report(store, &old_media)?
+            .page(None, StorageOrder::Largest, 0))).await.unwrap();
+        let paged = storage_report_paged(&store, media, None, StorageOrder::Largest, 0).await.unwrap();
+        assert_eq!(serde_json::to_value(&paged).unwrap(), serde_json::to_value(old).unwrap());
+        assert_eq!(paged.chats[0].by_kind["image"], 7);
+        assert!(!paged.chats[0].by_kind.contains_key("document"));
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn hundred_thousand_row_report_releases_worker_for_live_insert() {
+        let root = std::env::temp_dir().join(format!("postal-storage-large-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let media = root.join("media");
+        std::fs::create_dir_all(&media).unwrap();
+        let file = media.join("shared.bin");
+        std::fs::write(&file, [1u8; 3]).unwrap();
+        let path = file.to_string_lossy().into_owned();
+        let store = StoreWorker::open(&root.join("messages.db")).await.unwrap();
+        store.run(move |store| store.with_test_connection(|conn| {
+            let tx = conn.transaction()?;
+            let mut insert = tx.prepare("INSERT INTO messages
+                (chat, id, sender, timestamp, from_me, text, media_kind, media_path)
+                VALUES ('a@s', ?1, 'peer@s', ?2, 0, '', ?3, ?4)")?;
+            for index in 0..100_000 {
+                let media = index % 100 == 0;
+                insert.execute(rusqlite::params![index.to_string(), index,
+                    media.then_some("image"), media.then_some(path.as_str())])?;
+            }
+            drop(insert);
+            tx.commit()?;
+            Ok(())
+        })).await.unwrap();
+        let (first_tx, first_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let reporting = store.clone();
+        let report = tokio::spawn(async move {
+            let mut pause = Some((first_tx, release_rx));
+            storage_report_paged_with(&reporting, media, None, StorageOrder::Largest, 0, move |_| {
+                let pause = pause.take();
+                async move { if let Some((first, release)) = pause { let _ = first.send(()); let _ = release.await; } }
+            }).await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(10), first_rx).await.unwrap().unwrap();
+        let writer = store.clone();
+        let started = std::time::Instant::now();
+        tokio::time::timeout(std::time::Duration::from_secs(5), writer.run(|store| {
+            let mut message = StoredMessage::default();
+            message.header.chat = "a@s".into();
+            message.header.id = "live".into();
+            store.insert_message(&message)?;
+            Ok(())
+        })).await.unwrap().unwrap();
+        eprintln!("storage live insert during paused report: {:?}", started.elapsed());
+        release_tx.send(()).unwrap();
+        let report = tokio::time::timeout(std::time::Duration::from_secs(30), report).await.unwrap().unwrap().unwrap();
+        assert_eq!(report.total_files, 1_000);
+        drop(writer);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn storage_counts_shared_files_and_cleanup_preserves_messages_and_download_info() {

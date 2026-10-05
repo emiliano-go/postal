@@ -263,6 +263,40 @@ pub(super) async fn audit_group_notice(store: &StoreWorker, row: &StoredMessage,
     Ok(store.run(move |store| store.record_group_audit(&records)).await? > 0)
 }
 
+async fn group_audit_page_paged(store: &StoreWorker, chat: Option<String>, filter: GroupAuditFilter) -> Result<GroupAuditPage> {
+    group_audit_page_paged_with(store, chat, filter, |_, _| async {}).await
+}
+
+async fn group_audit_page_paged_with<F, Fut>(store: &StoreWorker, chat: Option<String>, filter: GroupAuditFilter,
+    mut after_chunk: F) -> Result<GroupAuditPage>
+where F: FnMut(&'static str, i64) -> Fut, Fut: std::future::Future<Output = ()> {
+    let message_upper = store.run(|store| store.max_message_rowid()).await?;
+    let mut after = 0;
+    loop {
+        let (next, complete) = store.run(move |store| store.seed_notices_chunk(after, message_upper)).await?;
+        if complete { break; }
+        after = next;
+        after_chunk("seed", after).await;
+        tokio::task::yield_now().await;
+    }
+    let upper = store.run(|store| store.audit_max_id()).await?;
+    // The id ceiling excludes later audit inserts; earlier rows can still change.
+    let mut entries = Vec::new();
+    let mut after = 0;
+    while after < upper {
+        let (chat, filter) = (chat.clone(), filter.clone());
+        let (next, mut page) = store.run(move |store|
+            store.group_audit_window(chat.as_deref(), &filter, after, upper)).await?;
+        if next == after { break; }
+        after = next;
+        entries.append(&mut page);
+        after_chunk("page", after).await;
+        tokio::task::yield_now().await;
+    }
+    let limit = filter.limit.unwrap_or(100).clamp(1, 200) as usize;
+    Ok(tokio::task::spawn_blocking(move || crate::store::group_audit::finish_page(entries, limit)).await?)
+}
+
 impl WhatsAppService {
     pub(super) async fn audit_local_group_change(&self, chat: &str, kind: Kind, target: Option<&str>,
         message_id: Option<&str>, source_id: Option<&str>, old_value: Option<&str>, new_value: Option<&str>) -> Result<bool> {
@@ -294,8 +328,9 @@ impl WhatsAppService {
             let parsed: Jid = jid.parse()?;
             anyhow::ensure!(person(Some(&parsed)).is_some(), "choose a group member");
         }
+        anyhow::ensure!(filter.since.zip(filter.until).is_none_or(|(since, until)| since <= until), "invalid audit date range");
         let chat = chat.map(|chat| chat.to_non_ad().to_string());
-        self.store.run(move |store| store.group_audit_page(chat.as_deref(), &filter)).await
+        group_audit_page_paged(&self.store, chat, filter).await
     }
 
 }

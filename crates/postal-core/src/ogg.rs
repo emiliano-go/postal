@@ -30,7 +30,7 @@ fn vint(data: &[u8], at: usize, keep_marker: bool) -> Option<(u64, usize, bool)>
 }
 
 /// The codec header and the Opus packets, in order.
-fn demux_webm(data: &[u8]) -> Option<(Option<Vec<u8>>, Vec<Vec<u8>>)> {
+fn demux_webm(data: &[u8]) -> Option<(Option<&[u8]>, Vec<&[u8]>)> {
     let mut head = None;
     let mut packets = Vec::new();
     let mut at = 0;
@@ -48,9 +48,9 @@ fn demux_webm(data: &[u8]) -> Option<(Option<Vec<u8>>, Vec<Vec<u8>>)> {
             _ if unknown => return None,
             _ => {}
         }
-        let end = body.checked_add(size as usize)?.min(data.len());
+        let end = body.checked_add(usize::try_from(size).ok()?)?.min(data.len());
         match id as u32 {
-            EBML_CODEC_PRIVATE => head = Some(data[body..end].to_vec()),
+            EBML_CODEC_PRIVATE => head = Some(&data[body..end]),
             EBML_SIMPLE_BLOCK | EBML_BLOCK => {
                 // Track number, 16-bit timecode, flags, then the frame.
                 let (_, track_len, _) = vint(data, body, false)?;
@@ -58,7 +58,8 @@ fn demux_webm(data: &[u8]) -> Option<(Option<Vec<u8>>, Vec<Vec<u8>>)> {
                 let frame = body + track_len + 3;
                 // Chromium never laces audio; a laced block is not worth guessing at.
                 if flags & 0x06 == 0 && frame < end {
-                    packets.push(data[frame..end].to_vec());
+                    if packets.len() == 100_000 { return None; }
+                    packets.push(&data[frame..end]);
                 }
             }
             _ => {}
@@ -129,7 +130,7 @@ impl OggWriter {
 
 /// Groups packets into pages whose lacing tables fit Ogg's 255-segment count.
 /// A packet of `n` bytes takes `n / 255 + 1` lacing entries.
-fn page_chunks(packets: &[Vec<u8>]) -> anyhow::Result<Vec<Vec<&[u8]>>> {
+fn page_chunks<'a>(packets: &[&'a [u8]]) -> anyhow::Result<Vec<Vec<&'a [u8]>>> {
     let mut chunks: Vec<Vec<&[u8]>> = Vec::new();
     let mut current: Vec<&[u8]> = Vec::new();
     let mut segments = 0usize;
@@ -154,6 +155,8 @@ fn page_chunks(packets: &[Vec<u8>]) -> anyhow::Result<Vec<Vec<&[u8]>>> {
 /// Converts a WebM/Opus recording to Ogg/Opus. Errors if the file holds no
 /// Opus audio, so a non-Opus recording is never mislabeled as Opus.
 pub fn webm_to_ogg(webm: &[u8]) -> anyhow::Result<Vec<u8>> {
+    // ponytail: recordings capped at 32 MiB/100k packets; stream demux for longer recordings.
+    anyhow::ensure!(webm.len() <= 32 * 1024 * 1024, "the recording exceeds the 32 MiB conversion limit");
     let (head, packets) = demux_webm(webm)
         .ok_or_else(|| anyhow::anyhow!("the recording is not a WebM file"))?;
     if packets.is_empty() {
@@ -162,6 +165,7 @@ pub fn webm_to_ogg(webm: &[u8]) -> anyhow::Result<Vec<u8>> {
     let head = head
         .filter(|h| h.starts_with(b"OpusHead"))
         .ok_or_else(|| anyhow::anyhow!("the recording's audio is not Opus"))?;
+    anyhow::ensure!(head.len() / 255 + 1 <= 255, "the Opus header is larger than one Ogg page can hold");
     let mut tags = b"OpusTags".to_vec();
     let vendor = b"postal";
     tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
@@ -233,13 +237,34 @@ mod tests {
         // A 1300-byte packet needs six lacing entries; the old 50-packet
         // chunks needed 300, wrapping the page's single count byte.
         let packets: Vec<Vec<u8>> = (0..100).map(|_| vec![0xF8; 1300]).collect();
-        let chunks = page_chunks(&packets).expect("chunks fit");
+        let borrowed: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
+        let chunks = page_chunks(&borrowed).expect("chunks fit");
         assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), 100);
         assert_eq!(chunks.len(), 3);
         for chunk in &chunks {
             let segments: usize = chunk.iter().map(|p| p.len() / 255 + 1).sum();
             assert!(segments <= 255, "a page needs {segments} lacing segments");
         }
+    }
+
+    #[test]
+    fn recording_conversion_refuses_oversized_input_and_packet_counts() {
+        assert!(webm_to_ogg(&vec![0; 32 * 1024 * 1024 + 1]).unwrap_err().to_string().contains("32 MiB"));
+        let block = element(&[0xA3], &[0x81, 0, 0, 0x80, 0xF8]);
+        let mut recording = Vec::new();
+        for _ in 0..100_000 { recording.extend_from_slice(&block); }
+        let (_, packets) = demux_webm(&recording).unwrap();
+        assert_eq!(packets.len(), 100_000);
+        assert!(std::ptr::eq(packets[0].as_ptr(), recording[6..].as_ptr()));
+        recording.extend_from_slice(&block);
+        assert!(demux_webm(&recording).is_none());
+        let mut head = b"OpusHead".to_vec();
+        head.resize(65_025, 0);
+        let mut oversized_header = vec![0x63, 0xA2];
+        oversized_header.extend_from_slice(&(head.len() as u64 | (1 << 56)).to_be_bytes());
+        oversized_header.extend_from_slice(&head);
+        oversized_header.extend_from_slice(&block);
+        assert!(webm_to_ogg(&oversized_header).unwrap_err().to_string().contains("Opus header"));
     }
 
     #[test]

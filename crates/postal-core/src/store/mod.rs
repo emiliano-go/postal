@@ -55,7 +55,7 @@ mod receipts;
 mod retention;
 pub use retention::{DiskRetention, DiskRetentionManager};
 mod limits;
-mod storage;
+pub(crate) mod storage;
 pub mod archive;
 pub mod albums;
 pub use albums::Album;
@@ -602,6 +602,11 @@ impl Drop for Batch<'_> {
 }
 
 impl MessageStore {
+    #[cfg(test)]
+    pub(crate) fn with_test_connection<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+        f(&mut self.conn.lock().unwrap())
+    }
+
     /// Opens (or creates) the store at `path`.
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_with_key(path, None)

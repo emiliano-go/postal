@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Media viewer fixture</title></head>
+  <body><div id="app"></div><script type="module">
+    import { mockConvertFileSrc } from "@tauri-apps/api/mocks";
+    import { mount } from "svelte";
+    import MediaViewerHarness from "./MediaViewerHarness.svelte";
+    mockConvertFileSrc("windows");
+    mount(MediaViewerHarness, { target: document.getElementById("app") });
+  </script></body>
+</html>

@@ -12,7 +12,7 @@ test("passive preview preserves full text while concealing deleted, spoiler and 
     server: { middlewareMode: true, ws: false, watch: null },
   });
   try {
-    const { previewContent } = await server.ssrLoadModule(fileURLToPath(new URL("../lib/chat/ChatPreview.svelte", import.meta.url)));
+    const { previewContent, previewCanViewMedia } = await server.ssrLoadModule(fileURLToPath(new URL("../lib/chat/ChatPreview.svelte", import.meta.url)));
     const message = Object.freeze({
       text: `*Readable* ${"long message ".repeat(40)}https://example.invalid`,
       media_kind: null, media_path: "unopened-local-file", media_thumb: "unopened-thumbnail",
@@ -32,6 +32,11 @@ test("passive preview preserves full text while concealing deleted, spoiler and 
     assert.deepEqual(previewContent({ ...message, media_kind: "image", text: "[image]" }), { text: "", media: "Photo", notice: false });
     assert.deepEqual(previewContent({ ...message, media_kind: "audio", text: "*Voice caption*" }), { text: "Voice caption", media: "Audio", notice: false });
     assert.deepEqual(previewContent({ ...message, media_kind: "poll", text: "Question" }), { text: "Question", media: "Poll", notice: false });
+    const media = { ...message, media_kind: "image", media_path: "private-file", media_once_kind: null, deleted: false, revoked: false, spoiler: false, system_kind: null };
+    assert.equal(previewCanViewMedia(media), true);
+    for (const hidden of [{ spoiler: true }, { media_once_kind: "image" }, { deleted: true }, { revoked: true }, { system_kind: "UNAVAILABLE_MESSAGE" }]) {
+      assert.equal(previewCanViewMedia({ ...media, ...hidden }), false);
+    }
     const unavailable = previewContent({ ...message, system_kind: "UNAVAILABLE_MESSAGE", media_kind: "image", text: "PRIVATE PAYLOAD" });
     assert.match(unavailable.text, /Message unavailable/);
     assert.match(unavailable.text, /cannot request it again from your phone/);

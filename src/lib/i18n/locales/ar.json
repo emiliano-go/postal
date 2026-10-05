@@ -236,6 +236,7 @@
   "error.device_logout_refresh": "قُبل تسجيل الخروج. تعذّر تحديث الأجهزة المرتبطة.",
   "error.member_audit_unavailable": "سجل إجراءات العضو غير متاح.",
   "error.operation_failed": "تعذّر إتمام العملية.",
+  "error.audio_conversion_limit": "يتجاوز الصوت حد تحويل التشغيل البالغ 32 ميبيبايت مضغوطًا أو 128 ميبيبايت بعد فك الترميز. جرّب فتحه في تطبيق آخر.",
   "error.space_items_existing": "اختر عناصر غير موجودة بالفعل في هذه المساحة.",
   "error.unblock_refresh": "قُبل إلغاء الحظر. تعذّر تحديث جهات الاتصال المحظورة.",
   "group.admin": "مشرف",
@@ -2182,6 +2183,9 @@
     "other": "{count} صوت"
   },
   "content.open_in_default_app": "فتح في التطبيق الافتراضي",
+  "content.start_slideshow": "بدء عرض الشرائح",
+  "content.pause_slideshow": "إيقاف عرض الشرائح مؤقتًا",
+  "content.reset_zoom": "إعادة ضبط التكبير",
   "content.show_reactions": "عرض التفاعلات",
   "content.send_as_view_once": "إرسال للعرض مرة واحدة",
   "content.pause": "إيقاف مؤقت",

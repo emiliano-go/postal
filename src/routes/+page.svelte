@@ -1176,6 +1176,9 @@
 
   /** The open chat's downloaded pictures and videos, oldest first, for the viewer. */
   const viewOnceIds = $derived(new Set(messages.marks.view_once.map((v) => v.id)));
+  const viewerScope = $derived(JSON.stringify([session.activeAccount, chats.selectedChat, messages.accountGeneration]));
+  let viewerRevealed = $state({ scope: "", ids: new Set<string>() });
+  const viewerSpoilerIds = $derived(viewerRevealed.scope === viewerScope ? viewerRevealed.ids : new Set<string>());
   function viewerItem(m: StoredMessage): ViewerItem {
     const selectedChat = chats.selectedChat;
     const who = m.from_me ? session.me : selectedChat?.endsWith("@g.us") ? bare(m.sender) : selectedChat;
@@ -1190,7 +1193,7 @@
       timestamp: m.timestamp,
     };
   }
-  const viewerItems = $derived<ViewerItem[]>(viewableMessages(messages.ordered.filter((message) => !keywords.hidden(message)), viewOnceIds).map(viewerItem));
+  const viewerItems = $derived<ViewerItem[]>(viewableMessages(messages.ordered.filter((message) => !keywords.hidden(message)), viewOnceIds, viewerSpoilerIds).map(viewerItem));
   function viewerPosition() { return viewerItems.findIndex((item) => item.id === ui.viewerId); }
   function setViewerPosition(index: number) { ui.viewerId = viewerItems[index]?.id ?? null; }
   $effect(() => { if (ui.viewerId !== null && viewerPosition() < 0) ui.viewerId = null; });
@@ -1209,7 +1212,10 @@
   }
 
   function openViewer(message: StoredMessage) {
-    if (viewerItems.some((item) => item.id === message.id)) ui.viewerId = message.id;
+    const current = viewableMessages(messages.ordered, viewOnceIds, new Set([message.id])).find((item) => item.id === message.id);
+    if (!current || keywords.hidden(current)) return;
+    if (current.spoiler) viewerRevealed = { scope: viewerScope, ids: new Set([...viewerSpoilerIds, current.id]) };
+    ui.viewerId = current.id;
   }
 
   /** Opens a downloaded media file in the desktop's default application. */
@@ -2273,6 +2279,10 @@
     bind:index={viewerPosition, setViewerPosition}
     onclose={() => (ui.viewerId = null)}
     onopen={openMedia}
+    onmediaaction={(id, action) => {
+      const message = viewableMessages(messages.ordered, viewOnceIds, viewerSpoilerIds).find((item) => item.id === id);
+      if (message) void act(() => invoke("message_media_action", { chat: message.chat, id, action }));
+    }}
     onreply={(id) => {
       composer.editing = null;
       composer.replyingTo = messages.messages.find((m) => m.id === id) ?? null;

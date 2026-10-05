@@ -255,6 +255,58 @@ fn record(conn: &Connection, raw: &GroupAuditRecord) -> Result<bool> {
     )? > 0)
 }
 
+fn audit_rows(conn: &Connection, chat: Option<&str>, filter: &GroupAuditFilter,
+    after: i64, upper: i64, limit: usize) -> Result<Vec<GroupAuditEntry>> {
+    if let Some(chat) = chat { group_chat(chat)?; }
+    anyhow::ensure!(filter.since.zip(filter.until).is_none_or(|(since, until)| since <= until), "invalid audit date range");
+    let actor = address(conn, filter.actor.as_deref())?;
+    let target = address(conn, filter.target.as_deref())?;
+    let member = address(conn, filter.member.as_deref())?;
+    let kind = filter.kind.map(enum_name).transpose()?;
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.chat, a.kind, a.actor, NULLIF(a.target, ''), a.old_value, a.new_value,
+            a.old_source, a.timestamp, a.observed_at, a.source, a.message_id,
+            EXISTS(SELECT 1 FROM messages m WHERE m.chat = a.chat AND m.id = a.message_id
+              AND NOT (m.deleted <> 0 AND m.text = '' AND m.media_kind IS NULL AND m.system_kind IS NULL))
+         FROM group_audit a WHERE a.id > ?11 AND a.id <= ?12
+           AND (?1 IS NULL OR a.chat = ?1) AND (?2 IS NULL OR a.kind = ?2)
+           AND (?3 IS NULL OR a.actor = ?3) AND (?4 IS NULL OR a.target = ?4)
+           AND (?5 IS NULL OR COALESCE(a.timestamp, a.observed_at) >= ?5)
+           AND (?6 IS NULL OR COALESCE(a.timestamp, a.observed_at) <= ?6)
+           AND (?7 IS NULL OR (COALESCE(a.timestamp, a.observed_at), a.id) < (?7, ?8))
+           AND (?10 IS NULL OR a.actor = ?10 OR a.target = ?10)
+           AND NOT EXISTS(SELECT 1 FROM hidden_chats h WHERE h.jid = a.chat)
+           AND NOT EXISTS(SELECT 1 FROM view_once v WHERE v.chat = a.chat AND v.id = a.message_id)
+           AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.chat = a.chat AND m.id = a.message_id
+               AND (m.spoiler <> 0 OR m.media_once_kind IS NOT NULL OR m.media_kind IN ('view_once', 'unknown')))
+         ORDER BY COALESCE(a.timestamp, a.observed_at) DESC, a.id DESC LIMIT ?9",
+    )?;
+    let entries = stmt.query_map(params![chat, kind, actor, target, filter.since, filter.until,
+        filter.before.as_ref().map(|c| c.timestamp), filter.before.as_ref().map(|c| c.id), limit as i64,
+        member, after, upper], |row| {
+        let old_source: Option<String> = row.get(7)?;
+        Ok(GroupAuditEntry {
+            id: row.get(0)?, chat: row.get(1)?, kind: enum_row(row, 2)?, actor: row.get(3)?, target: row.get(4)?,
+            old_value: row.get(5)?, new_value: row.get(6)?,
+            old_source: old_source.map(|_| enum_row(row, 7)).transpose()?,
+            timestamp: row.get(8)?, observed_at: row.get(9)?, source: enum_row(row, 10)?,
+            message_id: row.get(11)?, jump_available: row.get(12)?,
+        })
+    })?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(entries)
+}
+
+pub(crate) fn finish_page(mut entries: Vec<GroupAuditEntry>, limit: usize) -> GroupAuditPage {
+    entries.sort_by(|a, b| b.timestamp.unwrap_or(b.observed_at).cmp(&a.timestamp.unwrap_or(a.observed_at))
+        .then(b.id.cmp(&a.id)));
+    let has_more = entries.len() > limit;
+    entries.truncate(limit);
+    let next_cursor = entries.last().filter(|_| has_more).map(|entry| GroupAuditCursor {
+        timestamp: entry.timestamp.unwrap_or(entry.observed_at), id: entry.id,
+    });
+    GroupAuditPage { entries, has_more, next_cursor }
+}
+
 impl MessageStore {
     pub(crate) fn audit_message_context(&self, chat: &str, id: &str) -> Result<Option<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
@@ -272,50 +324,54 @@ impl MessageStore {
         Ok(changed)
     }
 
+    pub(crate) fn seed_notices_chunk(&self, after: i64, upper: i64) -> Result<(i64, bool)> {
+        let mut conn = self.conn.lock().unwrap();
+        let complete: bool = conn.query_row("SELECT COALESCE((SELECT value FROM meta WHERE key = 'group_audit_notices_seed_v1'), 0)", [], |row| row.get(0))?;
+        if complete { return Ok((after, true)); }
+        let ids = conn.prepare("SELECT rowid FROM messages WHERE rowid > ?1 AND rowid <= ?2 ORDER BY rowid LIMIT 256")?
+            .query_map((after, upper), |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let Some(last) = ids.last().copied() else {
+            conn.execute("INSERT INTO meta (key, value) VALUES ('group_audit_notices_seed_v1', 1)
+                ON CONFLICT(key) DO UPDATE SET value = 1", [])?;
+            return Ok((after, true));
+        };
+        let tx = conn.savepoint()?;
+        let rows = tx.prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages m LEFT JOIN names n ON n.jid = m.sender
+            WHERE m.rowid > ?1 AND m.rowid <= ?2 AND m.system_kind IS NOT NULL AND m.chat LIKE '%@g.us'
+              AND m.deleted = 0 AND m.spoiler = 0 AND m.media_once_kind IS NULL
+              AND COALESCE(m.media_kind, '') NOT IN ('view_once', 'unknown')
+              AND NOT EXISTS(SELECT 1 FROM hidden_chats h WHERE h.jid = m.chat)"))?
+            .query_map((after, last), message_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        for row in rows {
+            for entry in notice_records(&row, GroupAuditSource::Stored) { record(&tx, &entry)?; }
+        }
+        tx.commit()?;
+        Ok((last, false))
+    }
+
+    pub(crate) fn audit_max_id(&self) -> Result<i64> {
+        Ok(self.conn.lock().unwrap().query_row("SELECT COALESCE(MAX(id), 0) FROM group_audit", [], |row| row.get(0))?)
+    }
+
     pub fn group_audit_page(&self, chat: Option<&str>, filter: &GroupAuditFilter) -> Result<GroupAuditPage> {
         if let Some(chat) = chat { group_chat(chat)?; }
         anyhow::ensure!(filter.since.zip(filter.until).is_none_or(|(since, until)| since <= until), "invalid audit date range");
         let mut conn = self.conn.lock().unwrap();
         seed_notices(&mut conn)?;
-        let actor = address(&conn, filter.actor.as_deref())?;
-        let target = address(&conn, filter.target.as_deref())?;
-        let member = address(&conn, filter.member.as_deref())?;
-        let kind = filter.kind.map(enum_name).transpose()?;
         let limit = filter.limit.unwrap_or(100).clamp(1, 200) as usize;
-        let mut stmt = conn.prepare(
-            "SELECT a.id, a.chat, a.kind, a.actor, NULLIF(a.target, ''), a.old_value, a.new_value,
-                a.old_source, a.timestamp, a.observed_at, a.source, a.message_id,
-                EXISTS(SELECT 1 FROM messages m WHERE m.chat = a.chat AND m.id = a.message_id
-                  AND NOT (m.deleted <> 0 AND m.text = '' AND m.media_kind IS NULL AND m.system_kind IS NULL))
-             FROM group_audit a WHERE (?1 IS NULL OR a.chat = ?1) AND (?2 IS NULL OR a.kind = ?2)
-               AND (?3 IS NULL OR a.actor = ?3) AND (?4 IS NULL OR a.target = ?4)
-               AND (?5 IS NULL OR COALESCE(a.timestamp, a.observed_at) >= ?5)
-               AND (?6 IS NULL OR COALESCE(a.timestamp, a.observed_at) <= ?6)
-               AND (?7 IS NULL OR (COALESCE(a.timestamp, a.observed_at), a.id) < (?7, ?8))
-               AND (?10 IS NULL OR a.actor = ?10 OR a.target = ?10)
-               AND NOT EXISTS(SELECT 1 FROM hidden_chats h WHERE h.jid = a.chat)
-               AND NOT EXISTS(SELECT 1 FROM view_once v WHERE v.chat = a.chat AND v.id = a.message_id)
-               AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.chat = a.chat AND m.id = a.message_id
-                   AND (m.spoiler <> 0 OR m.media_once_kind IS NOT NULL OR m.media_kind IN ('view_once', 'unknown')))
-             ORDER BY COALESCE(a.timestamp, a.observed_at) DESC, a.id DESC LIMIT ?9",
-        )?;
-        let mut entries = stmt.query_map(params![chat, kind, actor, target, filter.since, filter.until,
-            filter.before.as_ref().map(|c| c.timestamp), filter.before.as_ref().map(|c| c.id), (limit + 1) as i64, member], |row| {
-            let old_source: Option<String> = row.get(7)?;
-            Ok(GroupAuditEntry {
-                id: row.get(0)?, chat: row.get(1)?, kind: enum_row(row, 2)?, actor: row.get(3)?, target: row.get(4)?,
-                old_value: row.get(5)?, new_value: row.get(6)?,
-                old_source: old_source.map(|_| enum_row(row, 7)).transpose()?,
-                timestamp: row.get(8)?, observed_at: row.get(9)?, source: enum_row(row, 10)?,
-                message_id: row.get(11)?, jump_available: row.get(12)?,
-            })
-        })?.collect::<rusqlite::Result<Vec<_>>>()?;
-        let has_more = entries.len() > limit;
-        entries.truncate(limit);
-        let next_cursor = entries.last().filter(|_| has_more).map(|entry| GroupAuditCursor {
-            timestamp: entry.timestamp.unwrap_or(entry.observed_at), id: entry.id,
-        });
-        Ok(GroupAuditPage { entries, has_more, next_cursor })
+        Ok(finish_page(audit_rows(&conn, chat, filter, 0, i64::MAX, limit + 1)?, limit))
+    }
+
+    pub(crate) fn group_audit_window(&self, chat: Option<&str>, filter: &GroupAuditFilter,
+        after: i64, upper: i64) -> Result<(i64, Vec<GroupAuditEntry>)> {
+        let conn = self.conn.lock().unwrap();
+        let ids = conn.prepare("SELECT id FROM group_audit WHERE id > ?1 AND id <= ?2 ORDER BY id LIMIT 256")?
+            .query_map((after, upper), |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let Some(last) = ids.last().copied() else {
+            audit_rows(&conn, chat, filter, after, after, 1)?;
+            return Ok((after, Vec::new()));
+        };
+        Ok((last, audit_rows(&conn, chat, filter, after, last, 256)?))
     }
 
 }

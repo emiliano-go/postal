@@ -259,3 +259,26 @@ fn failed_stored_notice_seed_rolls_back_records_and_marker_before_retry() {
     assert_eq!(retry.entries.len(), 1);
     assert_eq!(retry.entries[0].source, GroupAuditSource::Stored);
 }
+
+#[test]
+fn incremental_notice_seed_preserves_page_output() {
+    let store = store();
+    for index in 0..300 {
+        let mut row = StoredMessage::default();
+        row.header.chat = "1@g.us".into();
+        row.header.id = format!("plain-{index}");
+        store.insert_message(&row).unwrap();
+    }
+    store.insert_message(&saved_notice("1@g.us", "eligible")).unwrap();
+    let upper = store.max_message_rowid().unwrap();
+    let mut after = 0;
+    loop {
+        let (next, complete) = store.seed_notices_chunk(after, upper).unwrap();
+        if complete { break; }
+        assert!(next > after);
+        after = next;
+    }
+    let page = store.group_audit_page(None, &GroupAuditFilter::default()).unwrap();
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0].source, GroupAuditSource::Stored);
+}

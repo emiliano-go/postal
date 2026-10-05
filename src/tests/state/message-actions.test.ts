@@ -20,7 +20,7 @@ async function withApp(run: (app: {
     ordered: StoredMessage[],
   ) => StoredMessage[];
   forwardMessages: (batch: StoredMessage[], targets: string[]) => Promise<void>;
-  viewableMessages: (ordered: StoredMessage[], viewOnce: Set<string>) => StoredMessage[];
+  viewableMessages: (ordered: StoredMessage[], viewOnce: Set<string>, revealedSpoilers?: ReadonlySet<string>) => StoredMessage[];
   copyMessages: (batch: StoredMessage[]) => Promise<void>;
   starMessages: (batch: StoredMessage[], starred: boolean) => Promise<void>;
   reactMessages: (batch: StoredMessage[], emoji: string) => Promise<void>;
@@ -812,6 +812,7 @@ test("greyed-out media stays viewable, one-time copies stay behind their filter"
       media("video", { media_kind: "video" }),
       media("unfetched", { media_path: null }),
       media("once"),
+      media("spoiler", { spoiler: true }),
       { chat: "99@g.us", id: "text", text: "hi" } as StoredMessage,
     ];
     const shown = viewableMessages(ordered, new Set(["once"]));
@@ -819,5 +820,7 @@ test("greyed-out media stays viewable, one-time copies stay behind their filter"
       shown.map((m) => m.id),
       ["revoked", "deleted", "plain", "video"],
     );
+    assert.deepEqual(viewableMessages(ordered, new Set(["once"]), new Set(["spoiler", "once"]))
+      .map((message) => message.id), ["revoked", "deleted", "plain", "video", "spoiler"]);
   });
 });

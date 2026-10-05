@@ -178,9 +178,9 @@ unsafe fn first_frame(input: VideoInput<'_>) -> Option<image::RgbImage> {
     let video = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
     select_rgb_stream(&reader, video)?;
     let sample = first_sample(&reader, video)?;
-    let buffer = sample.ConvertToContiguousBuffer().ok()?;
     // Read after the first sample: the decoder only settles the frame size then.
     let (width, height, stride, visible) = frame_geometry(&reader, video)?;
+    let buffer = sample.ConvertToContiguousBuffer().ok()?;
     copy_frame(&buffer, width, height, stride, visible)
 }
 
@@ -249,10 +249,12 @@ unsafe fn frame_geometry(reader: &IMFSourceReader, video: u32) -> Option<(u32, u
     let format = reader.GetCurrentMediaType(video).ok()?;
     let size = format.GetUINT64(&MF_MT_FRAME_SIZE).ok()?;
     let (width, height) = ((size >> 32) as u32, size as u32);
+    if width == 0 || height == 0 || width > 8192 || height > 8192 { return None; }
     let stride = format
         .GetUINT32(&MF_MT_DEFAULT_STRIDE)
         .map(|s| s as i32)
         .unwrap_or(width as i32 * 4);
+    video_frame_bytes(width, height, stride)?;
     // Decoders pad to whole macroblocks (1080 rows become 1088); the aperture is
     // the picture. MFVideoArea: two MFOffset { fract: u16, value: i16 }, then SIZE.
     let mut area = [0u8; 16];
@@ -282,12 +284,13 @@ unsafe fn copy_frame(
     visible: (u32, u32, u32, u32),
 ) -> Option<image::RgbImage> {
     let (left, top, visible_w, visible_h) = visible;
+    let required = video_frame_bytes(width, height, stride)?;
     let mut data: *mut u8 = std::ptr::null_mut();
     let mut len = 0u32;
     buffer.Lock(&mut data, None, Some(&mut len as *mut _)).ok()?;
     let pixels = std::slice::from_raw_parts(data, len as usize);
     let row = stride.unsigned_abs() as usize;
-    let frame = (width > 0 && row >= width as usize * 4 && pixels.len() >= row * height as usize)
+    let frame = (pixels.len() >= required)
         .then(|| {
             image::RgbImage::from_fn(visible_w, visible_h, |x, y| {
                 let y = top + y;
@@ -304,19 +307,24 @@ unsafe fn copy_frame(
 
 #[cfg(not(windows))]
 fn video_thumbnail_file(path: &std::path::Path) -> Option<Vec<u8>> {
-    let output = std::process::Command::new("ffmpeg")
-        .args(["-loglevel", "error", "-i"]).arg(path)
-        .args(["-frames:v", "1", "-vf", "scale=256:256:force_original_aspect_ratio=decrease", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
-        .output().ok()?;
-    (output.status.success() && !output.stdout.is_empty()).then_some(output.stdout)
+    let mut command = std::process::Command::new("ffmpeg");
+    command.args(["-loglevel", "error", "-i"]).arg(path)
+        .args(["-frames:v", "1", "-vf", "scale=256:256:force_original_aspect_ratio=decrease", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]);
+    thumbnail_output(command, None)
+}
+
+#[cfg(any(windows, test))]
+fn video_frame_bytes(width: u32, height: u32, stride: i32) -> Option<usize> {
+    if width == 0 || height == 0 || width > 8192 || height > 8192 { return None; }
+    let row = stride.unsigned_abs() as usize;
+    let size = row.checked_mul(height as usize)?;
+    (row >= width as usize * 4 && size <= 128 * 1024 * 1024).then_some(size)
 }
 
 #[cfg(not(windows))]
 fn video_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    let mut child = Command::new("ffmpeg")
+    let mut command = std::process::Command::new("ffmpeg");
+    command
         .args([
             "-loglevel", "error",
             "-i", "pipe:0",
@@ -324,22 +332,60 @@ fn video_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
             "-vf", "scale=256:256:force_original_aspect_ratio=decrease",
             "-f", "mjpeg",
             "pipe:1",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    // Fed from another thread while stdout drains: ffmpeg stops reading after
-    // the first frame, so a write can fail with a broken pipe after the frame
-    // is out, or block while ffmpeg waits on a full stdout pipe.
-    let mut stdin = child.stdin.take()?;
-    let output = std::thread::scope(|scope| {
-        scope.spawn(move || {
-            let _ = stdin.write_all(bytes);
-        });
-        child.wait_with_output()
+        ]);
+    thumbnail_output(command, Some(bytes))
+}
+
+#[cfg(any(not(windows), test))]
+fn thumbnail_output(mut command: std::process::Command, input: Option<&[u8]>) -> Option<Vec<u8>> {
+    use std::io::{Read, Write};
+    use std::process::Stdio;
+    const MAX_THUMBNAIL_BYTES: usize = 256 * 1024;
+    let mut child = command.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    std::thread::scope(|scope| {
+        if let Some(mut stdin) = child.stdin.take() {
+            scope.spawn(move || { let _ = stdin.write_all(input.unwrap_or_default()); });
+        }
+        let mut bytes = Vec::with_capacity(MAX_THUMBNAIL_BYTES + 1);
+        let read = stdout.take(MAX_THUMBNAIL_BYTES as u64 + 1).read_to_end(&mut bytes);
+        if read.is_err() || bytes.len() > MAX_THUMBNAIL_BYTES { let _ = child.kill(); }
+        let status = child.wait().ok()?;
+        (read.is_ok() && status.success() && !bytes.is_empty() && bytes.len() <= MAX_THUMBNAIL_BYTES).then_some(bytes)
     })
-    .ok()?;
-    (output.status.success() && !output.stdout.is_empty()).then_some(output.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_frame_buffers_reject_excessive_shapes_before_copying() {
+        assert_eq!(video_frame_bytes(1920, 1080, -7680), Some(1920 * 1080 * 4));
+        assert!(video_frame_bytes(0, 1080, 7680).is_none());
+        assert!(video_frame_bytes(1920, 1080, 1).is_none());
+        assert!(video_frame_bytes(8192, 8192, 8192 * 4).is_none());
+        assert!(video_frame_bytes(u32::MAX, u32::MAX, i32::MIN).is_none());
+    }
+
+    #[test]
+    fn thumbnail_output_child() {
+        use std::io::Write;
+        if let Ok(size) = std::env::var("POSTAL_TEST_THUMBNAIL_BYTES") {
+            std::io::stdout().write_all(&vec![b'x'; size.parse::<usize>().unwrap()]).unwrap();
+        }
+    }
+
+    #[test]
+    fn thumbnail_output_is_bounded_and_reaps_oversized_children() {
+        let child = |size: usize| {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", "service::media_codec::tests::thumbnail_output_child", "--nocapture"])
+                .env("POSTAL_TEST_THUMBNAIL_BYTES", size.to_string());
+            command
+        };
+        assert!(thumbnail_output(child(16), None).is_some());
+        assert!(thumbnail_output(child(256 * 1024 + 1), None).is_none());
+    }
 }

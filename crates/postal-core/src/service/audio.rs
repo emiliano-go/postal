@@ -16,6 +16,38 @@ use super::*;
 /// The subdirectory of the media folder holding converted playback files.
 pub(super) const PLAYABLE_DIR: &str = "playable";
 
+// ponytail: bounded whole-file decoding; stream samples if longer conversions are needed.
+const MAX_AUDIO_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PCM_SAMPLES: usize = 128 * 1024 * 1024 / std::mem::size_of::<f32>();
+
+fn conversion_limit() -> anyhow::Error {
+    crate::message_ref::MessageRef::new("error.audio_conversion_limit").into()
+}
+
+fn sample_end(current: usize, additional: usize, limit: usize) -> Result<usize> {
+    current.checked_add(additional).filter(|end| *end <= limit).ok_or_else(conversion_limit)
+}
+
+fn reserve_samples(samples: &mut Vec<f32>, additional: usize, limit: usize) -> Result<usize> {
+    let end = sample_end(samples.len(), additional, limit)?;
+    if end > samples.capacity() {
+        let capacity = samples.capacity().saturating_mul(2).max(end).min(limit);
+        samples.try_reserve_exact(capacity - samples.len())?;
+    }
+    Ok(end)
+}
+
+fn read_audio(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > MAX_AUDIO_BYTES as u64 { return Err(conversion_limit()); }
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take(MAX_AUDIO_BYTES as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_AUDIO_BYTES { return Err(conversion_limit()); }
+    Ok(bytes)
+}
+
 /// Interleaved samples and their shape, ready for the WAV writer.
 struct Pcm {
     rate: u32,
@@ -45,16 +77,17 @@ fn is_wav(path: &Path) -> bool {
 /// Reads a WAV file's shape and interleaved samples, for the tests.
 #[cfg(test)]
 fn decode(path: &Path) -> Result<Pcm> {
-    let bytes = std::fs::read(path).with_context(|| format!("{} is not readable", path.display()))?;
-    decode_bytes(&bytes, path.extension().and_then(|e| e.to_str()))
+    let bytes = read_audio(path).with_context(|| format!("{} is not readable", path.display()))?;
+    decode_bytes(bytes, path.extension().and_then(|e| e.to_str()))
 }
 
 /// Decodes one audio file by its container; the extension is a probe hint only.
-fn decode_bytes(bytes: &[u8], extension: Option<&str>) -> Result<Pcm> {
-    if bytes.starts_with(b"OggS") && opus_head(bytes) {
-        return decode_ogg_opus(bytes);
+fn decode_bytes(bytes: Vec<u8>, extension: Option<&str>) -> Result<Pcm> {
+    if bytes.len() > MAX_AUDIO_BYTES { return Err(conversion_limit()); }
+    if bytes.starts_with(b"OggS") && opus_head(&bytes) {
+        return decode_ogg_opus(&bytes, MAX_PCM_SAMPLES);
     }
-    decode_symphonia(bytes, extension)
+    decode_symphonia(bytes, extension, MAX_PCM_SAMPLES)
 }
 
 /// Whether the first Ogg page announces an Opus stream.
@@ -64,7 +97,7 @@ fn opus_head(bytes: &[u8]) -> bool {
 
 /// Ogg Opus, the shape WhatsApp voice notes take. The reader applies the
 /// stream's pre-skip and end-trim, which the raw packets do not carry.
-fn decode_ogg_opus(bytes: &[u8]) -> Result<Pcm> {
+fn decode_ogg_opus(bytes: &[u8], sample_limit: usize) -> Result<Pcm> {
     use opus_pure::{OggOpusReader, Trim, MAX_PACKET_SAMPLES};
     let rate = 48_000i32;
     let mut reader = OggOpusReader::new(std::io::Cursor::new(bytes))
@@ -84,13 +117,15 @@ fn decode_ogg_opus(bytes: &[u8]) -> Result<Pcm> {
         let decoded = decoder
             .decode(&packet.data, MAX_PACKET_SAMPLES, &mut block)
             .map_err(|e| anyhow::anyhow!("cannot decode an Opus packet: {e}"))?;
-        samples.extend_from_slice(trim.keep(&packet, &block[..decoded * channels]));
+        let kept = trim.keep(&packet, &block[..decoded * channels]);
+        reserve_samples(&mut samples, kept.len(), sample_limit)?;
+        samples.extend_from_slice(kept);
     }
     Ok(Pcm { rate: rate as u32, channels, samples })
 }
 
 /// Everything else, by container and codec (AAC/MP4, MP3, Vorbis, FLAC, ...).
-fn decode_symphonia(bytes: &[u8], extension: Option<&str>) -> Result<Pcm> {
+fn decode_symphonia(bytes: Vec<u8>, extension: Option<&str>, sample_limit: usize) -> Result<Pcm> {
     use symphonia::core::codecs::audio::AudioDecoderOptions;
     use symphonia::core::errors::Error as SymphoniaError;
     use symphonia::core::formats::probe::Hint;
@@ -99,7 +134,7 @@ fn decode_symphonia(bytes: &[u8], extension: Option<&str>) -> Result<Pcm> {
     use symphonia::core::meta::MetadataOptions;
 
     let stream = MediaSourceStream::new(
-        Box::new(std::io::Cursor::new(bytes.to_vec())),
+        Box::new(std::io::Cursor::new(bytes)),
         Default::default(),
     );
     let mut hint = Hint::new();
@@ -135,7 +170,8 @@ fn decode_symphonia(bytes: &[u8], extension: Option<&str>) -> Result<Pcm> {
                 let spec = decoded.spec();
                 shape.get_or_insert((spec.rate(), spec.channels().count()));
                 let start = samples.len();
-                samples.resize(start + decoded.samples_interleaved(), 0.0);
+                let end = reserve_samples(&mut samples, decoded.samples_interleaved(), sample_limit)?;
+                samples.resize(end, 0.0);
                 decoded.copy_to_slice_interleaved(&mut samples[start..]);
             }
             // A damaged frame is skipped; the rest of the file still plays.
@@ -150,16 +186,13 @@ fn decode_symphonia(bytes: &[u8], extension: Option<&str>) -> Result<Pcm> {
 
 /// Writes 16-bit PCM WAV; more than two channels are folded down to stereo.
 fn write_wav(pcm: &Pcm, path: &Path) -> Result<()> {
+    use std::io::Write;
+    anyhow::ensure!(pcm.channels > 0 && pcm.samples.len() % pcm.channels == 0, "audio has an incomplete PCM frame");
     let channels = pcm.channels.min(2).max(1);
-    let mut samples = Vec::with_capacity(pcm.samples.len());
-    for frame in pcm.samples.chunks(pcm.channels.max(1)) {
-        for &sample in frame.iter().take(channels) {
-            samples.push((sample.clamp(-1.0, 1.0) * 32767.0) as i16);
-        }
-    }
-    let data_len = (samples.len() * 2) as u32;
+    let count = pcm.samples.len() / pcm.channels.max(1) * channels;
+    let data_len = u32::try_from(count.checked_mul(2).ok_or_else(conversion_limit)?)?;
     let block_align = (channels * 2) as u16;
-    let mut out = Vec::with_capacity(44 + data_len as usize);
+    let mut out = Vec::with_capacity(44);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(36 + data_len).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
@@ -167,15 +200,19 @@ fn write_wav(pcm: &Pcm, path: &Path) -> Result<()> {
     out.extend_from_slice(&1u16.to_le_bytes());
     out.extend_from_slice(&(channels as u16).to_le_bytes());
     out.extend_from_slice(&pcm.rate.to_le_bytes());
-    out.extend_from_slice(&(pcm.rate * block_align as u32).to_le_bytes());
+    out.extend_from_slice(&pcm.rate.checked_mul(block_align as u32).ok_or_else(conversion_limit)?.to_le_bytes());
     out.extend_from_slice(&block_align.to_le_bytes());
     out.extend_from_slice(&16u16.to_le_bytes());
     out.extend_from_slice(b"data");
     out.extend_from_slice(&data_len.to_le_bytes());
-    for sample in samples {
-        out.extend_from_slice(&sample.to_le_bytes());
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    file.write_all(&out)?;
+    for frame in pcm.samples.chunks_exact(pcm.channels.max(1)) {
+        for &sample in frame.iter().take(channels) {
+            file.write_all(&((sample.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())?;
+        }
     }
-    std::fs::write(path, out).with_context(|| format!("cannot write {}", path.display()))
+    file.flush().with_context(|| format!("cannot write {}", path.display()))
 }
 
 /// The media folder and the validated file inside it a playable conversion
@@ -218,8 +255,8 @@ impl WhatsAppService {
             let destination = destination.clone();
             let temp = temp.clone();
             move || -> Result<()> {
-                let bytes = std::fs::read(&source)?;
-                let pcm = decode_bytes(&bytes, source.extension().and_then(|e| e.to_str()))?;
+                let bytes = read_audio(&source)?;
+                let pcm = decode_bytes(bytes, source.extension().and_then(|e| e.to_str()))?;
                 if let Some(parent) = destination.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
@@ -299,7 +336,9 @@ fn remux_video(source: &Path, destination: &Path) -> Result<()> {
             "-movflags", "+faststart",
         ])
         .arg(&temp)
-        .output();
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status();
     let output = match output {
         Ok(output) => output,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -307,11 +346,10 @@ fn remux_video(source: &Path, destination: &Path) -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     };
-    if !output.status.success() {
+    if !output.success() {
         let _ = std::fs::remove_file(&temp);
         anyhow::bail!(
-            "ffmpeg could not remux the video: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "ffmpeg could not remux the video: {output}"
         );
     }
     match std::fs::rename(&temp, destination) {
@@ -360,7 +398,7 @@ mod tests {
 
     #[test]
     fn an_ogg_opus_tone_decodes_to_audible_pcm() {
-        let pcm = decode_bytes(&ogg_opus_tone(), Some("ogg")).unwrap();
+        let pcm = decode_bytes(ogg_opus_tone(), Some("ogg")).unwrap();
         assert_eq!(pcm.rate, 48_000);
         assert_eq!(pcm.channels, 1);
         // One second, less the codec's algorithmic delay.
@@ -381,7 +419,7 @@ mod tests {
         // Files saved before the mimetype fix carry an `.ogg` name over MP4
         // bytes; the hint must not throw the prober off.
         let bytes = std::fs::read(&fixture).unwrap();
-        let misnamed = decode_bytes(&bytes, Some("ogg")).unwrap();
+        let misnamed = decode_bytes(bytes, Some("ogg")).unwrap();
         assert_eq!(misnamed.rate, 44_100);
         assert!(peak(&misnamed.samples) > 0.1);
     }
@@ -402,12 +440,40 @@ mod tests {
         let read = decode(&path).unwrap();
         assert_eq!(read.rate, 8_000);
         assert_eq!(read.samples.len(), 4);
+        let partial = Pcm { rate: 8_000, channels: 2, samples: vec![0.0; 3] };
+        assert!(write_wav(&partial, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn something_that_is_not_audio_is_refused() {
-        assert!(decode_bytes(b"not an audio file at all", None).is_err());
+        assert!(decode_bytes(b"not an audio file at all".to_vec(), None).is_err());
+    }
+
+    #[test]
+    fn both_decoders_stop_before_growing_past_the_sample_budget() {
+        let opus = decode_ogg_opus(&ogg_opus_tone(), 100).err().unwrap();
+        assert_eq!(opus.downcast_ref::<crate::message_ref::MessageRef>().unwrap().code, "error.audio_conversion_limit");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tone.m4a");
+        let aac = decode_symphonia(std::fs::read(fixture).unwrap(), Some("m4a"), 100).err().unwrap();
+        assert_eq!(aac.downcast_ref::<crate::message_ref::MessageRef>().unwrap().code, "error.audio_conversion_limit");
+        assert!(sample_end(usize::MAX, 1, usize::MAX).is_err());
+        let mut samples = vec![0.0; 8];
+        reserve_samples(&mut samples, 2, 10).unwrap();
+        samples.resize(10, 0.0);
+        assert!(samples.capacity() >= 10);
+        assert!(reserve_samples(&mut samples, 1, 10).is_err());
+        assert_eq!(samples.len(), 10);
+    }
+
+    #[test]
+    fn oversized_compressed_audio_is_refused_before_reading() {
+        let path = std::env::temp_dir().join(format!("postal-audio-limit-{}-{}", std::process::id(), NEXT_ID.fetch_add(1, Ordering::Relaxed)));
+        std::fs::File::create(&path).unwrap().set_len(MAX_AUDIO_BYTES as u64 + 1).unwrap();
+        let error = read_audio(&path).unwrap_err();
+        assert_eq!(error.downcast_ref::<crate::message_ref::MessageRef>().unwrap().code, "error.audio_conversion_limit");
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
