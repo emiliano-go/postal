@@ -527,7 +527,6 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
 const MESSAGE_STATE_TABLES: &[&str] = &[
     "reactions",
     "stars",
-    "message_pins",
     "polls",
     "poll_votes",
     "quiz_polls",

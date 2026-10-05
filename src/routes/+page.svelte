@@ -78,7 +78,7 @@
   import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
-  import { bare, captionOf, dayKey, dayLabel, formatTime, isUnavailable, MEDIA_LABELS } from "$lib/utils/message";
+  import { bare, captionOf, dayKey, dayLabel, formatTime, isUnavailable } from "$lib/utils/message";
   import { chats } from "$lib/state/chats.svelte";
   import { composer } from "$lib/state/composer.svelte";
   import { favorites } from "$lib/state/favorites.svelte";
@@ -105,6 +105,8 @@
   import { helpShortcut, helpDismissed, dismissHelp } from "$lib/utils/help";
   import CreateDialog from "$lib/chat/CreateDialog.svelte";
   import { plain } from "$lib/utils/format";
+  import { floatContent } from "$lib/utils/float-chat";
+  import { stepPinnedMessageId } from "$lib/utils/message-pins";
   import { customization, lensMap } from "$lib/utils/theme.svelte";
   import {
     accessibility,
@@ -555,7 +557,7 @@
     composer.forgetRecovery(chat);
     if (wasOpen) {
       messages.acceptMessages([]);
-      messages.marks = structuredClone({ reactions: [], starred: [], pinned: null, polls: [], events: [], view_once: [], forwarded: [], edited: [] });
+      messages.marks = structuredClone({ reactions: [], starred: [], pinned: null, pinned_messages: [], polls: [], events: [], view_once: [], forwarded: [], edited: [] });
       messages.mentionQueue = [];
       messages.mentionCursor = 0;
       messages.firstUnreadId = null;
@@ -1144,18 +1146,80 @@
     }
   }
 
-  /** Pinned bar content for the chat header. */
+  let activePinnedId = $state<string | null>(null);
+  let pinnedSelectionScope = "";
+  let pinnedPreview = $state<StoredMessage | null>(null);
+  let pinnedPreviewRequest = 0;
+  let pinnedJumpRequest = 0;
+
+  $effect(() => {
+    const pins = messages.pinnedIds;
+    const scope = JSON.stringify([session.activeAccount, chats.selectedChat, messages.accountGeneration]);
+    if (scope !== pinnedSelectionScope) {
+      pinnedSelectionScope = scope;
+      activePinnedId = pins[0] ?? null;
+    } else if (!activePinnedId || !pins.includes(activePinnedId)) {
+      activePinnedId = pins[0] ?? null;
+    }
+  });
+
+  $effect(() => {
+    const id = activePinnedId, chat = chats.selectedChat, account = session.activeAccount;
+    const generation = messages.accountGeneration, request = ++pinnedPreviewRequest;
+    if (!id || !chat || !account) { pinnedPreview = null; return; }
+    const loaded = untrack(() => messages.messages.find((message) => message.id === id) ?? null);
+    if (loaded) { pinnedPreview = loaded; return; }
+    pinnedPreview = null;
+    void messages.loadPinnedPreview(chat, id).then((message) => {
+      if (request === pinnedPreviewRequest && account === session.activeAccount && generation === messages.accountGeneration
+        && chat === chats.selectedChat && id === activePinnedId) pinnedPreview = message;
+    }).catch(() => {});
+  });
+
   const pinnedView = $derived.by(() => {
-    const m = messages.pinnedMessage;
-    if (!m) return null;
+    const ids = messages.pinnedIds, id = activePinnedId;
+    if (!id || !ids.includes(id)) return null;
+    const message = messages.messages.find((row) => row.id === id) ?? (pinnedPreview?.id === id ? pinnedPreview : null);
+    const content = message ? floatContent(message, (user) => members.mentionName(user)) : null;
     return {
-      id: m.id,
-      get author() { return m.from_me ? t("chat.you") : members.senderLabel(m); },
-      body: m.media_kind
-        ? plain(captionOf(m), (user) => members.mentionName(user)) || MEDIA_LABELS[m.media_kind]
-        : plain(m.text, (user) => members.mentionName(user)),
+      id,
+      author: message ? (message.from_me ? t("chat.you") : members.senderLabel(message)) : "",
+      body: content ? [content.text, content.media].filter(Boolean).join(" · ") || t("chat.pinned_message") : t("chat.pinned_message"),
+      position: ids.indexOf(id) + 1,
+      count: ids.length,
     };
   });
+
+  function stepPinned(direction: -1 | 1) {
+    const id = stepPinnedMessageId(messages.pinnedIds, activePinnedId, direction);
+    if (id) { ++pinnedJumpRequest; activePinnedId = id; }
+  }
+
+  async function jumpToPinned(id: string) {
+    const chat = chats.selectedChat, account = session.activeAccount, generation = messages.accountGeneration;
+    const request = ++pinnedJumpRequest;
+    const current = () => request === pinnedJumpRequest && !!account && account === session.activeAccount
+      && chat === chats.selectedChat && generation === messages.accountGeneration;
+    if (!chat || !account || !messages.pinnedIds.includes(id)) return;
+    try {
+      const row = messages.messages.find((message) => message.id === id)
+        ?? (pinnedPreview?.id === id ? pinnedPreview : await messages.loadPinnedPreview(chat, id));
+      if (!current()) return;
+      if (!row) { ui.fail(uiError("error.page.history_missing")); return; }
+      if (keywords.hidden(row)) { ui.fail(uiError("error.page.keyword_hidden")); return; }
+      if (!messageList?.hasMessage(id)) {
+        if (!await messages.showStoredMessage(chat, id) || !current()) {
+          if (current()) ui.fail(uiError("error.page.history_missing"));
+          return;
+        }
+        await tick();
+        if (!current()) return;
+      }
+      scrollToMessage(id);
+    } catch (error) {
+      if (current()) ui.fail(error);
+    }
+  }
 
 
   function menuItems(message: StoredMessage): MenuItem[] {
@@ -1707,7 +1771,9 @@
           ongallery={() => (galleryChat = selectedChat)}
           onsettings={() => (ui.chatSettingsOpen = true)}
           onjumpmention={jumpNextMention}
-          onpinnedjump={(id) => scrollToMessage(id)}
+          onpinnedjump={(id) => void jumpToPinned(id)}
+          onpinnedprevious={() => stepPinned(-1)}
+          onpinnednext={() => stepPinned(1)}
           onclearchat={() => (ui.chatConfirm = { kind: "clear", chat: selectedChat })}
           ondeletechat={() => (ui.chatConfirm = { kind: "delete", chat: selectedChat })} />
 

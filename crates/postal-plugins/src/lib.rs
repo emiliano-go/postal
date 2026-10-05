@@ -1,3 +1,4 @@
+mod limits;
 mod manifest;
 mod process;
 mod protocol;
@@ -13,6 +14,7 @@ pub use transcription::{
 #[cfg(feature = "wire-types")]
 pub fn visit_wire_types(visitor: &mut impl ts_rs::TypeVisitor) {
     visitor.visit::<PluginInfo>();
+    visitor.visit::<PluginResourceLimits>();
     visitor.visit::<protocol::Reply>();
     visitor.visit::<protocol::HostMessage>();
 }
@@ -40,18 +42,43 @@ const MAX_FAILURES: u32 = 3;
 
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+pub struct PluginResourceLimits {
+    pub windows_job_commit_gib: u32,
+    pub unix_process_address_space_gib: u32,
+    pub process_cpu_minutes: u32,
+    pub windows_max_processes: u32,
+    pub unix_max_processes: Option<u32>,
+}
+
+impl Default for PluginResourceLimits {
+    fn default() -> Self {
+        Self {
+            windows_job_commit_gib: (limits::MEMORY_BYTES / (1024 * 1024 * 1024)) as u32,
+            unix_process_address_space_gib: (limits::MEMORY_BYTES / (1024 * 1024 * 1024)) as u32,
+            process_cpu_minutes: (limits::CPU_SECONDS / 60) as u32,
+            windows_max_processes: limits::MAX_PROCESSES,
+            unix_max_processes: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct PluginInfo {
     #[serde(flatten)]
     pub manifest: Manifest,
     pub enabled: bool,
     pub state: String,
     pub error: Option<String>,
+    pub error_code: Option<String>,
+    pub limits: PluginResourceLimits,
 }
 
 #[derive(Default)]
 struct Runtime {
     state: String,
     error: Option<String>,
+    error_code: Option<String>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -100,6 +127,7 @@ fn status(runtime: &Mutex<Runtime>, state: &str, error: Option<String>) {
     runtime.state = state.into();
     if error.is_some() {
         runtime.error = error;
+        runtime.error_code = None;
     }
 }
 
@@ -159,6 +187,7 @@ impl PluginHost {
                                 runtime: Arc::new(Mutex::new(Runtime {
                                     state: "disabled".into(),
                                     error: None,
+                                    error_code: None,
                                 })),
                                 events: None,
                                 stop: None,
@@ -196,6 +225,8 @@ impl PluginHost {
                     enabled: entry.grant.enabled,
                     state: runtime.state.clone(),
                     error: runtime.error.clone(),
+                    error_code: runtime.error_code.clone(),
+                    limits: PluginResourceLimits::default(),
                 }
             })
             .collect()
@@ -300,6 +331,7 @@ impl PluginHost {
         *entry.runtime.lock().unwrap() = Runtime {
             state: if enabled { "idle" } else { "disabled" }.into(),
             error: None,
+            error_code: None,
         };
         if enabled {
             let (sender, events) = mpsc::channel(QUEUE_SIZE);
@@ -647,7 +679,12 @@ async fn supervise(
             }
         }
     }
-    status(&runtime, "stopped", None);
+    if !matches!(
+        runtime.lock().unwrap().state.as_str(),
+        "failed" | "disabled"
+    ) {
+        status(&runtime, "stopped", None);
+    }
 }
 
 fn reject(event: Option<Envelope>, reason: &str) {
@@ -723,14 +760,20 @@ async fn failure(
     stop: &mut watch::Receiver<bool>,
     error: &anyhow::Error,
 ) -> bool {
+    let limited = error.downcast_ref::<limits::LimitBreach>().is_some();
     let error = format!("{error:#}");
     log::warn!("plugin {}: {error}", plugin.manifest.id);
     status(runtime, "failed", Some(error));
-    if plugin.manifest.activation == Activation::Lazy {
+    if limited {
+        runtime.lock().unwrap().error_code = Some("error.plugin_resource_limit".into());
+    }
+    if plugin.manifest.activation == Activation::Lazy && !limited {
         return false;
     }
-    *failures += 1;
-    if *failures >= MAX_FAILURES {
+    if !limited {
+        *failures += 1;
+    }
+    if limited || *failures >= MAX_FAILURES {
         if let Some(inner) = inner.upgrade() {
             let id = plugin.manifest.id.clone();
             let saved = tokio::task::spawn_blocking(move || {
@@ -747,6 +790,9 @@ async fn failure(
                         "plugin disabled; could not persist disabled state: {saved:?}"
                     )),
                 );
+                if limited {
+                    runtime.lock().unwrap().error_code = Some("error.plugin_resource_limit".into());
+                }
             }
         }
         return true;
@@ -755,5 +801,46 @@ async fn failure(
     tokio::select! {
         _ = stop.changed() => true,
         _ = tokio::time::sleep(Duration::from_millis(250 * (1 << (*failures - 1)))) => false,
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn resource_breach_is_typed_and_stops_lazy_plugin() {
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id":"org.postal.synthetic", "name":"Synthetic", "version":"1", "api_version":1,
+            "entrypoint":"synthetic", "activation":"lazy", "idle_timeout_secs":null,
+            "capabilities":["events:read"], "contributes":{"commands":[]}
+        }))
+        .unwrap();
+        let plugin = manifest::Plugin {
+            manifest,
+            directory: PathBuf::new(),
+            executable: PathBuf::new(),
+        };
+        let runtime = Mutex::new(Runtime::default());
+        let (_sender, mut stop) = watch::channel(false);
+        let mut failures = 0;
+        assert!(
+            failure(
+                &Weak::new(),
+                &plugin,
+                &runtime,
+                &mut failures,
+                &mut stop,
+                &anyhow::Error::new(limits::LimitBreach::Memory)
+            )
+            .await
+        );
+        let state = runtime.lock().unwrap();
+        assert_eq!(state.state, "failed");
+        assert_eq!(
+            state.error_code.as_deref(),
+            Some("error.plugin_resource_limit")
+        );
+        assert!(state.error.as_deref().unwrap().contains("memory"));
     }
 }

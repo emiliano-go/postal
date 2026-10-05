@@ -34,8 +34,7 @@ impl MessageStore {
         Ok(())
     }
 
-    /// The chat's pinned message, or none.
-    // ponytail: one message pin per chat; add ranks for multiple pins.
+    /// Pins one message, or unpins the first active message when absent.
     pub fn set_message_pin(&self, chat: &str, id: Option<&str>) -> Result<()> {
         self.mirror_message_pin(chat, id)
     }
@@ -51,10 +50,12 @@ impl MessageStore {
 
     pub(super) fn marks_on(conn: &Connection, chat: &str, message_ids: Option<&[String]>) -> Result<ChatMarks> {
         let scope = MarksScope::new(conn, chat, message_ids)?;
+        let pinned_messages = scope.pinned_messages()?;
         Ok(ChatMarks {
             reactions: scope.reactions()?,
             starred: scope.starred()?,
-            pinned: scope.pinned()?,
+            pinned: pinned_messages.first().cloned(),
+            pinned_messages,
             polls: scope.polls_with_votes()?,
             events: scope.events_with_responses()?,
             view_once: scope.view_once()?,
@@ -302,8 +303,8 @@ impl MarksScope<'_> {
         Ok(rows)
     }
 
-    fn pinned(&self) -> Result<Option<String>> {
-        super::history_pins::pinned(self.conn, &self.chat)
+    fn pinned_messages(&self) -> Result<Vec<String>> {
+        super::history_pins::pinned_messages(self.conn, &self.chat)
     }
 
     fn polls_with_votes(&self) -> Result<Vec<Poll>> {
@@ -344,11 +345,10 @@ impl MarksScope<'_> {
                  e.extra_guests_allowed,e.is_scheduled_call,e.has_reminder,e.reminder_offset_sec,e.invitation_id,e.invitation,
                  COALESCE(length(e.secret)=32 AND e.canceled=0 AND e.invitation=0 AND EXISTS(SELECT 1 FROM messages m
                      WHERE m.chat=e.chat AND m.id=e.id AND ({})),0),
-                 EXISTS(SELECT 1 FROM messages m WHERE m.chat=e.chat AND m.id=e.id AND ({}) AND (
-                     EXISTS(SELECT 1 FROM message_pin_sync s WHERE s.chat=e.chat AND s.target=e.id AND s.pinned=1
-                         AND (s.expires_at IS NULL OR s.expires_at>?3)) OR
-                     EXISTS(SELECT 1 FROM message_pins p WHERE p.chat=e.chat AND p.id=e.id
-                         AND NOT EXISTS(SELECT 1 FROM message_pin_sync s WHERE s.chat=e.chat))))
+                 EXISTS(SELECT 1 FROM messages m WHERE m.chat=e.chat AND m.id=e.id AND ({}) AND
+                     EXISTS(SELECT 1 FROM message_pins p JOIN message_pin_sync s
+                         ON s.chat=p.chat AND s.target=p.id WHERE p.chat=e.chat AND p.id=e.id
+                         AND s.pinned=1 AND (s.expires_at IS NULL OR s.expires_at>?3)))
                  FROM events e WHERE e.chat=?1 AND (?2 IS NULL OR e.id IN (SELECT value FROM json_each(?2)))",
                     super::event_rsvps::PUBLIC_EVENT, super::event_rsvps::PUBLIC_EVENT),
             )?

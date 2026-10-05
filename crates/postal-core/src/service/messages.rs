@@ -345,7 +345,7 @@ impl WhatsAppService {
             self.client.unpin_message(jid, key).await
         };
         let sent = sent.map_err(anyhow::Error::from)?;
-        let pin = history_pins::live_message_pin(sent.message.as_ref(), unix_now() * 1000)?
+        let pin = history_pins::live_message_pin(sent.message.as_ref(), unix_now() * 1000, None, true)?
             .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.message_pin_target")))?;
         let chat_key = chat.to_owned();
         self.store.run(move |store| store.apply_message_pin_update(&chat_key, &pin, false)).await?;

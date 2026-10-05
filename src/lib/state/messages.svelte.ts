@@ -10,6 +10,7 @@ import { isUnavailable } from "$lib/utils/message";
 import { keywords } from "./keywords.svelte";
 import { LocalizedError, normalizeError } from "../i18n/errors.ts";
 import { uiError } from "./localized.ts";
+import { pinnedMessageIds } from "$lib/utils/message-pins";
 
 const PAGE = 50;
 export const MAX_DOWNLOAD_TRIES = 3;
@@ -103,11 +104,9 @@ export class MessagesState {
     return byMessage;
   });
   starred = $derived(new Set(this.marks.starred));
+  pinnedIds = $derived(pinnedMessageIds(this.marks));
   edited = $derived(new Set(this.marks.edited));
   forwarded = $derived(new Set(this.marks.forwarded));
-  pinnedMessage = $derived(
-    this.marks.pinned ? (this.messages.find((m) => m.id === this.marks.pinned) ?? null) : null,
-  );
 
   /** Media downloads in flight, so a second click does not start another. */
   downloading = $state<Record<string, true>>({});
@@ -333,6 +332,7 @@ export class MessagesState {
 
   async showStoredMessage(chat: string, id: string): Promise<boolean> {
     if (chat !== this.chat) return false;
+    const account = this.accountSeq;
     this.loadingOlder = false;
     this.historyActive = false;
     this.recall = null;
@@ -340,11 +340,19 @@ export class MessagesState {
     this.settleRecall();
     const seq = ++this.messagesSeq;
     const page = await invoke<MessagePage>("message_page", { chat, limit: this.messageLimit, anchorId: id, direction: "through" });
-    if (seq !== this.messagesSeq || chat !== this.chat || !page.messages.some((m) => m.id === id)) return false;
+    if (account !== this.accountSeq || seq !== this.messagesSeq || chat !== this.chat || !page.messages.some((m) => m.chat === chat && m.id === id)) return false;
     this.atLatest = false;
     this.acceptMessages(page.messages);
     await this.loadMarks(chat);
     return true;
+  }
+
+  async loadPinnedPreview(chat: string, id: string): Promise<StoredMessage | null> {
+    const account = this.accountSeq;
+    if (chat !== this.chat) return null;
+    const page = await invoke<MessagePage>("message_page", { chat, limit: 1, anchorId: id, direction: "through" });
+    if (account !== this.accountSeq || chat !== this.chat) return null;
+    return page.messages.find((message) => message.chat === chat && message.id === id) ?? null;
   }
 
   async loadMarks(chat: string | null) {
@@ -529,6 +537,7 @@ export class MessagesState {
     this.atLatest = true;
     this.refreshPending = false;
     this.marksSeq++;
+    this.marks = structuredClone(NO_MARKS);
     this.messagesSeq++;
     this.recall = null;
     this.loadingOlder = false;
@@ -575,6 +584,7 @@ const NO_MARKS: Marks = {
   reactions: [],
   starred: [],
   pinned: null,
+  pinned_messages: [],
   polls: [],
   events: [],
   view_once: [],

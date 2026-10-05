@@ -38,6 +38,11 @@
 
 <div class="plugins">
   {#if view.directory}<p class="path">{t("settings.plugin_directory")} <bdi>{view.directory}</bdi></p>{/if}
+  {#if view.plugins[0]}
+    {@const limits = view.plugins[0].limits}
+    <p>{t("settings.plugin_limits", { memory: limits.windows_job_commit_gib, unixMemory: limits.unix_process_address_space_gib,
+      cpu: limits.process_cpu_minutes, processes: limits.windows_max_processes })}</p>
+  {/if}
   {#if !view.plugins.length}<p>{t("settings.plugins_empty")}</p>{/if}
   {#each view.plugins as plugin (plugin.id)}
     {@const failure = plugin.error_message || plugin.error ? normalizeError({ kind: "postal_error",
@@ -45,7 +50,7 @@
       diagnostic: plugin.diagnostic ?? plugin.error ?? undefined }) : null}
     <article>
       <h3><bdi>{plugin.name}</bdi> <small>{plugin.version}</small></h3>
-      <p>{plugin.id} · {plugin.activation} · {plugin.enabled ? plugin.state : "disabled"}</p>
+      <p>{plugin.id} · {plugin.activation} · {plugin.state}</p>
       <p>{t("settings.plugin_capabilities")} <bdi>{plugin.capabilities.join(", ")}</bdi></p>
       {#if plugin.activation === "lazy"}<p>{t("settings.plugin_unload")}{plugin.idle_timeout_secs ? t("settings.plugin_idle", { count: plugin.idle_timeout_secs }) : ""}.</p>{/if}
       {#if failure}<p role="alert">{failure.message}</p>{#if failure.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{failure.diagnostic}</pre></details>{/if}{/if}

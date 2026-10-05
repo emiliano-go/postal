@@ -11,14 +11,14 @@ export function previewCanViewMedia(message: Pick<StoredMessage, "media_kind" | 
     message.system_kind !== "UNAVAILABLE_MESSAGE" && ["image", "video", "gif"].includes(message.media_kind ?? "");
 }
 
-export function floatContent(message: StoredMessage) {
+export function floatContent(message: StoredMessage, mentionName?: (user: string) => string) {
   if (message.system_kind === "UNAVAILABLE_MESSAGE") return { text: `${t("message.unavailable")}. ${t("message.unavailable_explanation")}`, media: null, notice: true };
   if (message.deleted || message.revoked) return { text: t("message.deleted"), media: null, notice: true };
   if (message.spoiler) return { text: t("message.spoiler"), media: null, notice: true };
   if (message.media_kind === "view_once" || message.media_once_kind) return { text: "", media: t("message.view_once"), notice: false };
   if (message.system_kind) return { text: t("message.system_notice"), media: null, notice: true };
   const kind = message.media_kind;
-  return { text: plain(captionOf(message)), media: kind ? MEDIA_LABELS[kind] ?? CARD_LABELS[kind] ?? (kind === "poll" ? t("message.poll") : kind === "event" ? t("message.event") : t("message.unsupported")) : null, notice: false };
+  return { text: plain(captionOf(message), mentionName), media: kind ? MEDIA_LABELS[kind] ?? CARD_LABELS[kind] ?? (kind === "poll" ? t("message.poll") : kind === "event" ? t("message.event") : t("message.unsupported")) : null, notice: false };
 }
 
 export function mergeFloatPage(rows: readonly StoredMessage[], page: MessagePage, chat: string, older = false): StoredMessage[] {

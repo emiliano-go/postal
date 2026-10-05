@@ -1,5 +1,5 @@
 import type { StorageFile, StorageReport, StorageCleanup } from "../../src/lib/utils/storage";
-import type { StoredMessage } from "../../src/lib/utils/models";
+import type { Marks, StoredMessage } from "../../src/lib/utils/models";
 import type { MessageCursor } from "../../src/lib/utils/message-window";
 export const windowFixture = {
   archive: Array.from({ length: 350 }, (_, n) => ({ chat: "window@s", id: String(n).padStart(4, "0"), timestamp: 100, text: `Message ${n}` }) as StoredMessage),
@@ -27,6 +27,12 @@ export const previewFixture = {
     system_kind: n === 20 ? "SYSTEM_NOTICE" : null,
     deleted: n === 24, revoked: n === 25, spoiler: n === 28, read: false, mentioned: n === 29,
   }) as StoredMessage),
+};
+export const pinFixture = {
+  rows: [] as StoredMessage[],
+  marks: null as Marks | null,
+  calls: [] as { id: string; limit: number }[],
+  failNextAnchor: "",
 };
 export const selectionFixture = { calls: [] as { command: string; args: unknown }[], failure: false };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
@@ -87,7 +93,9 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
   if (["send_text", "send_reply", "send_voice", "send_sticker", "send_from_library", "send_typing"].includes(command)) return undefined as T;
   if (command === "list_plugins") return { directory: "synthetic/plugins", errors: [], plugins: [
     { id: "com.example.fixture", name: "Synthetic Plugin", version: "1", activation: "lazy", idle_timeout_secs: 30,
-      capabilities: ["events:read"], enabled: pluginFixture.enabled, state: "idle", error: pluginFixture.crashed ? "Disabled after three synthetic crashes" : null },
+      capabilities: ["events:read"], enabled: pluginFixture.enabled, state: "idle", error: pluginFixture.crashed ? "Disabled after three synthetic crashes" : null,
+      error_code: null, limits: { windows_job_commit_gib: 4, unix_process_address_space_gib: 4,
+        process_cpu_minutes: 30, windows_max_processes: 8, unix_max_processes: null } },
   ] } as T;
   if (command === "set_plugin_enabled") {
     if (pluginFixture.failure) throw new Error("Synthetic consent persistence failure");
@@ -151,6 +159,13 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     return complete();
   }
   if (command === "message_page") {
+    if (args?.chat === "pins-fixture@s.whatsapp.net") {
+      const id = String(args.anchorId ?? "");
+      pinFixture.calls.push({ id, limit: Number(args.limit ?? 0) });
+      if (id && id === pinFixture.failNextAnchor) { pinFixture.failNextAnchor = ""; return { messages: [], has_more: false } as T; }
+      const row = pinFixture.rows.find((message) => message.id === id);
+      return { messages: row ? [row] : [], has_more: false } as T;
+    }
     if (args?.chat === "quiet@s.whatsapp.net") {
       previewFixture.reads.push({ ...args });
       if (previewFixture.failure) throw new Error("Synthetic preview failure");
@@ -181,7 +196,10 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     return result;
   }
   if (command === "load_older") { windowFixture.phoneRequests++; return undefined as T; }
-  if (command === "marks") return { reactions: [], starred: [], pinned: null, polls: [], events: [], view_once: [], forwarded: [], edited: [] } as T;
+  if (command === "marks") {
+    if (args?.chat === "pins-fixture@s.whatsapp.net" && pinFixture.marks) return pinFixture.marks as T;
+    return { reactions: [], starred: [], pinned: null, pinned_messages: [], polls: [], events: [], view_once: [], forwarded: [], edited: [] } as T;
+  }
   if (command === "storage_report") {
     let files = fixture.media.filter((file) => !args?.chat || file.chat === args.chat)
       .toSorted((a, b) => args?.order === "oldest" ? a.timestamp - b.timestamp : b.bytes - a.bytes);

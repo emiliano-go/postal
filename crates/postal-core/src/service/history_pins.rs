@@ -1,5 +1,5 @@
 use super::*;
-use crate::store::history_pins::MessagePinUpdate;
+use crate::store::history_pins::{MessagePinUpdate, PinClock};
 
 fn expiry(timestamp: i64, duration: Option<u32>, kind: Option<wa::message_context_info::MessageAddonExpiryType>) -> Result<Option<i64>> {
     use wa::message_context_info::MessageAddonExpiryType;
@@ -27,16 +27,20 @@ pub(super) fn history_message_pin(web: &wa::WebMessageInfo) -> Result<Option<Mes
         _ => return Ok(None),
     };
     let Some((target, remote)) = target(pin.key.as_option()) else { return Ok(None) };
-    let Some(timestamp) = pin.server_timestamp_ms.or(pin.sender_timestamp_ms).filter(|timestamp| *timestamp > 0) else { return Ok(None) };
+    let (timestamp, clock) = if let Some(timestamp) = pin.server_timestamp_ms.filter(|timestamp| *timestamp > 0) {
+        (timestamp, PinClock::Server)
+    } else if let Some(timestamp) = pin.sender_timestamp_ms.filter(|timestamp| *timestamp > 0) {
+        (timestamp, PinClock::Sender)
+    } else { return Ok(None) };
     let expires_at = if pinned {
         let context = pin.message_add_on_context_info.as_option();
         expiry(timestamp, context.and_then(|context| context.message_add_on_duration_in_secs),
             context.and_then(|context| context.message_add_on_expiry_type))?
     } else { None };
-    Ok(Some(MessagePinUpdate { target, remote, pinned, timestamp, expires_at }))
+    Ok(Some(MessagePinUpdate { target, remote, pinned, timestamp, expires_at, clock }))
 }
 
-pub(super) fn live_message_pin(message: &wa::Message, fallback_timestamp: i64) -> Result<Option<MessagePinUpdate>> {
+pub(super) fn live_message_pin(message: &wa::Message, fallback_timestamp: i64, server_timestamp_ms: Option<i64>, local: bool) -> Result<Option<MessagePinUpdate>> {
     use wa::message::pin_in_chat_message::Type;
     let Some(pin) = message.pin_in_chat_message.as_option() else { return Ok(None) };
     let pinned = match pin.r#type {
@@ -45,14 +49,20 @@ pub(super) fn live_message_pin(message: &wa::Message, fallback_timestamp: i64) -
         _ => return Ok(None),
     };
     let Some((target, remote)) = target(pin.key.as_option()) else { return Ok(None) };
-    let timestamp = pin.sender_timestamp_ms.unwrap_or(fallback_timestamp);
+    let (timestamp, clock) = if local {
+        (pin.sender_timestamp_ms.filter(|timestamp| *timestamp > 0).unwrap_or(fallback_timestamp), PinClock::Local)
+    } else if let Some(timestamp) = server_timestamp_ms.filter(|timestamp| *timestamp > 0) {
+        (timestamp, PinClock::Server)
+    } else if let Some(timestamp) = pin.sender_timestamp_ms.filter(|timestamp| *timestamp > 0) {
+        (timestamp, PinClock::Sender)
+    } else { (fallback_timestamp, PinClock::Unknown) };
     anyhow::ensure!(timestamp > 0, "message pin timestamp is missing");
     let expires_at = if pinned {
         let context = message.message_context_info.as_option();
         expiry(timestamp, context.and_then(|context| context.message_add_on_duration_in_secs),
             context.and_then(|context| context.message_add_on_expiry_type))?
     } else { None };
-    Ok(Some(MessagePinUpdate { target, remote, pinned, timestamp, expires_at }))
+    Ok(Some(MessagePinUpdate { target, remote, pinned, timestamp, expires_at, clock }))
 }
 
 impl Inbound {
@@ -121,5 +131,51 @@ mod tests {
         assert!(expiry(i64::MAX, Some(1), None).is_err());
         web.pin_in_chat.as_option_mut().unwrap().r#type = Some(wa::pin_in_chat::Type::UNPIN_FOR_ALL);
         assert!(!history_message_pin(&web).unwrap().unwrap().pinned);
+    }
+
+    #[test]
+    fn synthetic_live_and_history_actions_keep_distinct_targets() {
+        let store = crate::store::MessageStore::open(std::path::Path::new(":memory:")).unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        let mut historical = web();
+        let pin = historical.pin_in_chat.as_option_mut().unwrap();
+        pin.key.as_option_mut().unwrap().id = Some("first".into());
+        pin.server_timestamp_ms = Some(now);
+        let first = history_message_pin(&historical).unwrap().unwrap();
+        store.apply_message_pin_update("1@g.us", &first, true).unwrap();
+        let live = |target: &str, kind, timestamp| wa::Message {
+            pin_in_chat_message: MessageField::some(wa::message::PinInChatMessage {
+                r#type: Some(kind), key: MessageField::some(wa::MessageKey {
+                    id: Some(target.into()), remote_jid: Some("1@g.us".into()), ..Default::default()
+                }), sender_timestamp_ms: Some(timestamp), ..Default::default()
+            }), ..Default::default()
+        };
+        let second = live_message_pin(&live("second", wa::message::pin_in_chat_message::Type::PIN_FOR_ALL, now + 1), now, Some(now + 1), false).unwrap().unwrap();
+        store.apply_message_pin_update("1@g.us", &second, false).unwrap();
+        assert_eq!(store.marks("1@g.us").unwrap().pinned_messages, ["second", "first"]);
+        let removed = live_message_pin(&live("second", wa::message::pin_in_chat_message::Type::UNPIN_FOR_ALL, now + 2), now, Some(now + 2), false).unwrap().unwrap();
+        store.apply_message_pin_update("1@g.us", &removed, false).unwrap();
+        assert_eq!(store.marks("1@g.us").unwrap().pinned_messages, ["first"]);
+        assert!(!store.apply_message_pin_update("1@g.us", &second, true).unwrap());
+    }
+
+    #[test]
+    fn live_pin_uses_server_clock_when_present_and_labels_fallbacks() {
+        let mut message = wa::Message {
+            pin_in_chat_message: MessageField::some(wa::message::PinInChatMessage {
+                r#type: Some(wa::message::pin_in_chat_message::Type::PIN_FOR_ALL),
+                key: MessageField::some(wa::MessageKey { id: Some("a".into()), ..Default::default() }),
+                sender_timestamp_ms: Some(900), ..Default::default()
+            }), ..Default::default()
+        };
+        let server = live_message_pin(&message, 800, Some(1000), false).unwrap().unwrap();
+        assert_eq!((server.timestamp, server.clock), (1000, PinClock::Server));
+        let sender = live_message_pin(&message, 800, None, false).unwrap().unwrap();
+        assert_eq!((sender.timestamp, sender.clock), (900, PinClock::Sender));
+        let local = live_message_pin(&message, 800, Some(1000), true).unwrap().unwrap();
+        assert_eq!((local.timestamp, local.clock), (900, PinClock::Local));
+        message.pin_in_chat_message.as_option_mut().unwrap().sender_timestamp_ms = None;
+        let envelope = live_message_pin(&message, 800, None, false).unwrap().unwrap();
+        assert_eq!((envelope.timestamp, envelope.clock), (800, PinClock::Unknown));
     }
 }

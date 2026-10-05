@@ -129,6 +129,8 @@ pub(super) fn keyword_clause(conn: &Connection, terms: &[String], first: usize) 
 mod tests {
     use super::*;
 
+    const PRE_FTS_SCHEMA: usize = 42;
+
     #[test]
     fn full_vacuum_before_open_rebuilds_index_for_message_rowids() {
         let root = std::env::temp_dir().join(format!("postal-fts-vacuum-{}-{}", std::process::id(),
@@ -228,7 +230,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let path = root.join("messages.db");
         let conn = Connection::open(&path).unwrap();
-        schema::migrate_to(&conn, schema::MIGRATIONS.len() - 1).unwrap();
+        schema::migrate_to(&conn, PRE_FTS_SCHEMA).unwrap();
         conn.execute("INSERT INTO messages(rowid,chat,id,sender,timestamp,from_me,text)
             VALUES (100,'a@s','old','peer@s',1,0,'historical needle')", []).unwrap();
         conn.execute("INSERT INTO messages(rowid,chat,id,sender,timestamp,from_me,text)
@@ -258,7 +260,7 @@ mod tests {
     #[test]
     fn unsupported_setup_rolls_back_and_later_capability_rebuilds() {
         let conn = Connection::open_in_memory().unwrap();
-        schema::migrate_to(&conn, schema::MIGRATIONS.len() - 1).unwrap();
+        schema::migrate_to(&conn, PRE_FTS_SCHEMA).unwrap();
         ensure_with(&conn, true, "missing_tokenizer", false).unwrap();
         assert!(!table_exists(&conn).unwrap());
         assert_eq!(trigger_count(&conn).unwrap(), 0);
@@ -296,7 +298,7 @@ mod tests {
     #[test]
     fn unrelated_index_setup_error_is_not_suppressed() {
         let conn = Connection::open_in_memory().unwrap();
-        schema::migrate_to(&conn, schema::MIGRATIONS.len() - 1).unwrap();
+        schema::migrate_to(&conn, PRE_FTS_SCHEMA).unwrap();
         conn.execute_batch("CREATE VIEW message_search AS SELECT 1").unwrap();
         let error = ensure_with(&conn, true, "trigram", false).unwrap_err().to_string();
         assert!(error.contains("already exists"), "{error}");

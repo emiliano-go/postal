@@ -543,6 +543,7 @@ pub struct ChatMarks {
     pub reactions: Vec<Reaction>,
     pub starred: Vec<String>,
     pub pinned: Option<String>,
+    pub pinned_messages: Vec<String>,
     pub polls: Vec<Poll>,
     pub events: Vec<Event>,
     /// View-once messages and whether each was opened (or sent by us, which counts).

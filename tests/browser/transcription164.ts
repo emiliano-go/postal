@@ -3,6 +3,8 @@ import type { StoredTranscript, TranscriptionEvent, TranscriptionView, PluginInf
 
 const plugin = { id: "org.postal.test-stt", name: "Synthetic STT", version: "1", api_version: 1, entrypoint: "synthetic",
   activation: "lazy", idle_timeout_secs: null, capabilities: ["transcribe"], enabled: false, state: "idle", error: null,
+  error_code: null, limits: { windows_job_commit_gib: 4, unix_process_address_space_gib: 4,
+    process_cpu_minutes: 30, windows_max_processes: 8, unix_max_processes: null },
   contributes: { commands: [], transcription: { id: "stt", providers: [
     { id: "local-whisper", name: "Synthetic local", kind: "local", transmits_audio: false, requires_key: false },
     { id: "openai", name: "Synthetic cloud", kind: "cloud", transmits_audio: true, requires_key: true },

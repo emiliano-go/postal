@@ -28,7 +28,7 @@ pub(crate) struct PluginRuntimeView {
 
 impl From<PluginInfo> for PluginRuntimeView {
     fn from(info: PluginInfo) -> Self {
-        let error_message = info.error.as_ref().map(|_| MessageRef::new("error.plugin_runtime_failed"));
+        let error_message = info.error.as_ref().map(|_| MessageRef::new(info.error_code.as_deref().unwrap_or("error.plugin_runtime_failed")));
         let diagnostic = info.error.clone();
         Self { info, error_message, diagnostic }
     }
@@ -192,12 +192,17 @@ mod tests {
             "id":"synthetic.plugin", "name":"Synthetic", "version":"1", "api_version":1,
             "entrypoint":"synthetic", "idle_timeout_secs":null, "capabilities":["transcribe"],
         })).unwrap();
-        let info = PluginInfo { manifest, enabled: false, state: "failed".into(), error: Some("synthetic diagnostic".into()) };
+        let info = PluginInfo { manifest, enabled: false, state: "failed".into(), error: Some("synthetic diagnostic".into()),
+            error_code: None, limits: postal_plugins::PluginResourceLimits::default() };
         let value = serde_json::to_value(PluginRuntimeView::from(info.clone())).unwrap();
         assert_eq!(value["id"], "synthetic.plugin");
         assert_eq!(value["error"], "synthetic diagnostic");
         assert_eq!(value["diagnostic"], "synthetic diagnostic");
         assert_eq!(value["error_message"]["code"], "error.plugin_runtime_failed");
+        let limited = serde_json::to_value(PluginRuntimeView::from(PluginInfo {
+            error_code: Some("error.plugin_resource_limit".into()), ..info.clone()
+        })).unwrap();
+        assert_eq!(limited["error_message"]["code"], "error.plugin_resource_limit");
         assert!(value.get("info").is_none());
         let clean = serde_json::to_value(PluginRuntimeView::from(PluginInfo { error: None, ..info })).unwrap();
         assert!(clean.get("error_message").is_none() && clean.get("diagnostic").is_none());

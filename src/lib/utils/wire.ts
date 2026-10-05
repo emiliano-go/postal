@@ -29,7 +29,7 @@ export type CachedSpaceGroup = { jid: string, subject: string | null, parent: st
 export type CallOutcome = "connected" | "rejected" | "cancelled" | "accepted_elsewhere" | "missed" | "invalid" | "unavailable" | "upcoming" | "failed" | "abandoned" | "ongoing" | "unknown";
 export type CallRecord = { call_id: string, creator_jid: string, peer_jid: string | null, group_jid: string | null, chat: string | null, from_me: boolean, is_video: boolean | null, outcome: CallOutcome, outcome_raw: number | null, call_type_raw: number | null, start_time_raw: string | null, duration_raw: string | null, mutation_at_ms: number, from_full_sync: boolean, };
 export type ChatLabelAssociation = { label_id: string, chat: string, };
-export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, polls: Array<Poll>, events: Array<Event>,
+export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, pinned_messages: Array<string>, polls: Array<Poll>, events: Array<Event>,
 /**
  * View-once messages and whether each was opened (or sent by us, which counts).
  */
@@ -341,9 +341,10 @@ error: string | null,
  * The add was accepted but still needs an admin's approval.
  */
 pending: boolean, };
-export type PluginInfo = { enabled: boolean, state: string, error: string | null, id: string, name: string, version: string, api_version: number, entrypoint: string, activation: Activation, idle_timeout_secs: number | null, capabilities: Array<string>, contributes: Contributions, };
+export type PluginInfo = { enabled: boolean, state: string, error: string | null, error_code: string | null, limits: PluginResourceLimits, id: string, name: string, version: string, api_version: number, entrypoint: string, activation: Activation, idle_timeout_secs: number | null, capabilities: Array<string>, contributes: Contributions, };
 export type PluginReply = { "type": "ready", name: string, } | { "type": "ack", seq: number, } | { "type": "log", level: string, message: string, } | { "type": "call", id: JsonValue, } | { "type": "event", } | { "type": "transcript", id: number, provider: string, text: string, language: string | null, } | { "type": "transcribe_error", id: number, message: string, } | { "type": "model_installed", id: number, filename: string, } | { "type": "model_error", id: number, message: string, };
-export type PluginRuntimeView = { error_message?: MessageRef, diagnostic?: string, enabled: boolean, state: string, error: string | null, id: string, name: string, version: string, api_version: number, entrypoint: string, activation: Activation, idle_timeout_secs: number | null, capabilities: Array<string>, contributes: Contributions, };
+export type PluginResourceLimits = { windows_job_commit_gib: number, unix_process_address_space_gib: number, process_cpu_minutes: number, windows_max_processes: number, unix_max_processes: number | null, };
+export type PluginRuntimeView = { error_message?: MessageRef, diagnostic?: string, enabled: boolean, state: string, error: string | null, error_code: string | null, limits: PluginResourceLimits, id: string, name: string, version: string, api_version: number, entrypoint: string, activation: Activation, idle_timeout_secs: number | null, capabilities: Array<string>, contributes: Contributions, };
 export type PluginsView = { plugins: Array<PluginRuntimeView>, directory: string, errors: Array<string>, failures: Array<MessageFailure>, };
 export type Poll = { id: string, name: string, options: Array<string>,
 /**

@@ -37,7 +37,11 @@ export function parseCatalog(value: unknown): Catalog {
 }
 
 export async function loadCatalog(language: LocaleLanguage): Promise<Catalog> {
-  return language === "en" ? englishCatalog : parseCatalog((await import("./locales/ar.json", { with: { type: "json" } })).default);
+  if (language === "en") return englishCatalog;
+  const module = typeof window === "undefined"
+    ? await import("./locales/ar.json", { with: { type: "json" } })
+    : await import("./locales/ar.json");
+  return parseCatalog(module.default);
 }
 
 export function resolveLocale(preference: LocalePreference, languages: readonly string[]): { locale: string; language: LocaleLanguage; dir: "ltr" | "rtl" } {

@@ -3809,11 +3809,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "libc",
  "log",
  "serde",
  "serde_json",
  "tokio",
  "ts-rs",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 

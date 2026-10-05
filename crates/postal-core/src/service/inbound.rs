@@ -801,7 +801,8 @@ impl Inbound {
             return true;
         }
         if base.pin_in_chat_message.as_option().is_some() {
-            if self.apply_message_pin(ctx, &incoming.chat, base, inbound.info.timestamp.timestamp_millis()).await {
+            if self.apply_message_pin(ctx, &incoming.chat, base, inbound.info.timestamp.timestamp_millis(),
+                inbound.info.server_timestamp_us.map(|timestamp| timestamp / 1000)).await {
                 self.audit_control(ctx, inbound, &incoming.chat, previous.as_ref()).await;
             }
             return true;
@@ -957,8 +958,9 @@ impl Inbound {
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
     }
 
-    async fn apply_message_pin(&self, ctx: &BatchCtx<'_>, chat: &str, base: &wa::Message, timestamp: i64) -> bool {
-        let Some(Some(pin)) = history_pins::live_message_pin(base, timestamp).observed() else { return false };
+    async fn apply_message_pin(&self, ctx: &BatchCtx<'_>, chat: &str, base: &wa::Message, timestamp: i64,
+        server_timestamp_ms: Option<i64>) -> bool {
+        let Some(Some(pin)) = history_pins::live_message_pin(base, timestamp, server_timestamp_ms, false).observed() else { return false };
         let chat = chat.to_owned();
         let event_chat = chat.clone();
         let changed = ctx.store.run(move |store| store.apply_message_pin_update(&chat, &pin, false)).await.observed();

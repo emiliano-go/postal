@@ -54,9 +54,10 @@ function route() {
 
 test("floating content reuses readable labels and never reveals private, deleted or undecryptable text", () => {
   assert.deepEqual(floatContent(row(1, { text: "*Bold*", media_kind: "image" })), { text: "Bold", media: "Photo", notice: false });
+  assert.equal(floatContent(row(1, { text: "Hello @1234567" }), () => "Alice").text, "Hello @Alice");
   for (const patch of [{ spoiler: true }, { deleted: true }, { revoked: true }, { media_kind: "view_once" },
     { media_kind: "image", media_once_kind: "image" }, { system_kind: "UNAVAILABLE_MESSAGE" }, { system_kind: "NOTICE" }]) {
-    assert.ok(!JSON.stringify(floatContent(row(1, { text: "PRIVATE CONTENT", media_path: "PRIVATE PATH", ...patch }))).includes("PRIVATE"));
+    assert.ok(!JSON.stringify(floatContent(row(1, { text: "PRIVATE @1234567", media_path: "PRIVATE PATH", ...patch }), () => { throw new Error("Private preview resolved a mention"); })).includes("PRIVATE"));
   }
 });
 

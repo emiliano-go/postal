@@ -12,6 +12,8 @@ const root = fileURLToPath(new URL("../../", import.meta.url)).replaceAll("\\", 
 const ref = { code: "error.content.no_account_selected", params: {} };
 const plugin = { id: "org.test.plugin", name: "Peer <Plugin>", version: "1.2.3", api_version: 1,
   enabled: true, state: "running", activation: "lazy", idle_timeout_secs: 40, entrypoint: "peer.exe",
+  error_code: null, limits: { windows_job_commit_gib: 4, unix_process_address_space_gib: 4,
+    process_cpu_minutes: 30, windows_max_processes: 8, unix_max_processes: null },
   capabilities: ["transcribe"], contributes: { commands: [], transcription: { id: "speech", providers: [] } } };
 const raw = "Raw <runtime> failure";
 const descriptor = { kind: "postal_error", ...ref, diagnostic: raw };
@@ -86,6 +88,9 @@ test("plugin and transcription discovery prefer typed failures, with compatible 
       assert.match(manager.html, /Peer &lt;Plugin(?:&gt;|>)/);
       assert.match(manager.html, /C:\/Peer &lt;directory(?:&gt;|>)/);
       assert.match(manager.html, /<button\b[^>]*disabled[^>]*>/);
+      const limitText = String((locale === "en" ? englishCatalog : await loadCatalog("ar"))["settings.plugin_limits"])
+        .replaceAll("{memory}", "4").replaceAll("{unixMemory}", "4").replaceAll("{cpu}", "30").replaceAll("{processes}", "8");
+      assert.ok(decode(manager.html).includes(limitText));
       const settings = { plugin_id: null, provider: "", model: null };
       const transcription = await ssr.body("src/lib/settings/TranscriptionSettings.svelte", {
         view: JSON.stringify({ settings, plugins, failures, errors, cloud_consents: [] }), draft: JSON.stringify(settings),
@@ -109,6 +114,23 @@ test("runtime leaves render typed command failures and raw details separately", 
         { autoTranscribe: false, onAutoTranscribe: () => assert.fail("SSR must not change settings") });
       assert.deepEqual(alerts(settings.html), [settings.text(ref.code)]);
       assert.deepEqual(details(settings.html), [raw]);
+    }
+  } finally { await ssr.close(); }
+});
+
+test("plugin resource breach renders its typed localized error", async () => {
+  const ssr = await renderer();
+  try {
+    for (const locale of ["en", "ar"]) {
+      const diagnostic = "Synthetic memory limit hit";
+      const limited = { ...plugin, state: "failed", enabled: false, error: diagnostic,
+        error_code: "error.plugin_resource_limit", error_message: { code: "error.plugin_resource_limit", params: {} }, diagnostic };
+      const manager = await ssr.body("src/lib/settings/PluginManager.svelte", {
+        view: JSON.stringify({ plugins: [limited], directory: "synthetic", failures: [], errors: [] }),
+      }, locale);
+      assert.deepEqual(alerts(manager.html), [(locale === "en" ? englishCatalog : await loadCatalog("ar"))["error.plugin_resource_limit"]]);
+      assert.deepEqual(details(manager.html), [diagnostic]);
+      assert.ok(decode(manager.html).includes("failed"));
     }
   } finally { await ssr.close(); }
 });

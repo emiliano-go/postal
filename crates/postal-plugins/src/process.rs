@@ -1,4 +1,5 @@
 use crate::{
+    limits::Limits,
     manifest::Plugin,
     protocol::{self, Reply},
 };
@@ -19,6 +20,7 @@ pub(crate) struct Session {
     stderr_task: JoinHandle<()>,
     id: String,
     capabilities: Vec<String>,
+    limits: Limits,
 }
 
 impl Session {
@@ -41,14 +43,27 @@ impl Session {
             .kill_on_drop(true);
         #[cfg(windows)]
         {
-            command.creation_flags(0x08000000);
+            command.creation_flags(
+                0x08000000 | windows_sys::Win32::System::Threading::CREATE_SUSPENDED,
+            );
             for key in ["SystemRoot", "WINDIR"] {
                 if let Some(value) = std::env::var_os(key) {
                     command.env(key, value);
                 }
             }
         }
+        #[cfg(windows)]
+        let limits = Limits::new()?;
+        #[cfg(unix)]
+        Limits::configure(&mut command);
         let mut child = command.spawn().context("spawn plugin")?;
+        #[cfg(windows)]
+        if let Err(error) = limits.attach_and_resume(&child) {
+            let _ = child.start_kill();
+            return Err(error);
+        }
+        #[cfg(unix)]
+        let limits = Limits::new(child.id().context("spawned plugin has no process id")?);
         let input = child.stdin.take().unwrap();
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let mut stderr = BufReader::new(child.stderr.take().unwrap());
@@ -78,6 +93,7 @@ impl Session {
             stderr_task,
             id,
             capabilities: plugin.manifest.capabilities.clone(),
+            limits,
         })
     }
 
@@ -104,9 +120,51 @@ impl Session {
 
     pub async fn next(&mut self) -> Result<Reply> {
         loop {
+            #[cfg(windows)]
             let data = tokio::select! {
-                data = self.output.recv() => data.context("plugin closed stdout")?,
-                status = self.child.wait() => bail!("plugin exited: {}", status?),
+                biased;
+                breach = self.limits.breached.recv() => bail!(breach.context("plugin limit monitor stopped")?),
+                data = self.output.recv() => match data {
+                    Some(data) => data,
+                    None => {
+                        if let Ok(Some(breach)) = tokio::time::timeout(Duration::from_millis(200), self.limits.breached.recv()).await { bail!(breach); }
+                        bail!("plugin closed stdout")
+                    }
+                },
+                status = self.child.wait() => {
+                    let status = status?;
+                    if let Ok(Some(breach)) = tokio::time::timeout(Duration::from_millis(200), self.limits.breached.recv()).await { bail!(breach); }
+                    bail!("plugin exited: {status}")
+                },
+            };
+            #[cfg(unix)]
+            let data = loop {
+                match tokio::time::timeout(Duration::from_millis(100), self.output.recv()).await {
+                    Ok(Some(data)) => break data,
+                    Ok(None) => {
+                        self.limits.terminate();
+                        let status = self.child.wait().await?;
+                        if let Some(breach) = crate::limits::exit_limit(status) {
+                            bail!(breach);
+                        }
+                        bail!("plugin closed stdout: {status}")
+                    }
+                    Err(_) => match self.limits.exited_unreaped() {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            self.limits.terminate();
+                            let status = self.child.wait().await?;
+                            if let Some(breach) = crate::limits::exit_limit(status) {
+                                bail!(breach);
+                            }
+                            bail!("plugin exited: {status}")
+                        }
+                        Err(error) => {
+                            self.limits.disarm();
+                            return Err(error.into());
+                        }
+                    },
+                }
             };
             match serde_json::from_slice(&data) {
                 Ok(Reply::Log { level, message }) => {
@@ -206,24 +264,99 @@ impl Session {
     }
 
     pub async fn shutdown(&mut self) {
-        let graceful = async {
-            self.write(b"{\"type\":\"shutdown\"}\n").await?;
-            self.child.wait().await?;
-            Ok::<_, anyhow::Error>(())
-        };
-        if !matches!(
-            tokio::time::timeout(Duration::from_secs(2), graceful).await,
-            Ok(Ok(()))
-        ) {
-            let _ = self.child.kill().await;
-            let _ = self.child.wait().await;
+        #[cfg(unix)]
+        {
+            let graceful = async {
+                self.write(b"{\"type\":\"shutdown\"}\n").await?;
+                while self.output.recv().await.is_some() {}
+                Ok::<_, anyhow::Error>(())
+            };
+            let _ = tokio::time::timeout(Duration::from_secs(2), graceful).await;
+            self.limits.terminate();
+            if tokio::time::timeout(Duration::from_secs(2), self.child.wait())
+                .await
+                .is_err()
+            {
+                let _ = self.child.kill().await;
+            }
+            return;
+        }
+        #[cfg(windows)]
+        {
+            let graceful = async {
+                self.write(b"{\"type\":\"shutdown\"}\n").await?;
+                self.child.wait().await?;
+                Ok::<_, anyhow::Error>(())
+            };
+            let stopped = matches!(
+                tokio::time::timeout(Duration::from_secs(2), graceful).await,
+                Ok(Ok(()))
+            );
+            self.limits.terminate();
+            if !stopped {
+                let _ = self.child.kill().await;
+                let _ = self.child.wait().await;
+            }
         }
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        self.limits.terminate();
         self.stdout_task.abort();
         self.stderr_task.abort();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod resource_tests {
+    use super::*;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+    #[tokio::test]
+    async fn session_reports_memory_breach_as_typed_error() {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["sidecar_resource_child", "--ignored", "--nocapture"])
+            .env("POSTAL_TEST_RESOURCE", "memory")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_SUSPENDED | 0x08000000)
+            .kill_on_drop(true);
+        let limits = Limits::with_limits(64 * 1024 * 1024, 1, 8).unwrap();
+        let mut child = command.spawn().unwrap();
+        limits.attach_and_resume(&child).unwrap();
+        let input = child.stdin.take().unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let (send, output) = mpsc::channel(16);
+        let stdout_task = tokio::spawn(async move {
+            while let Ok(Some(line)) = protocol::line(&mut stdout).await {
+                if send.send(line).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let stderr_task = tokio::spawn(async {});
+        let mut session = Session {
+            child,
+            input,
+            output,
+            stdout_task,
+            stderr_task,
+            id: "resource-fixture".into(),
+            capabilities: vec![],
+            limits,
+        };
+        let error = tokio::time::timeout(Duration::from_secs(15), session.next())
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<crate::limits::LimitBreach>(),
+            Some(crate::limits::LimitBreach::Memory)
+        ));
     }
 }

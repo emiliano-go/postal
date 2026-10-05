@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Locale loading regression</title></head>
+  <body>
+    <output id="locale-loading-result" data-complete="false" data-pass="false">Running locale checks…</output>
+    <script type="module">
+      import { locale } from "$lib/i18n/locale.svelte";
+      import { englishCatalog, t } from "$lib/i18n/localizer";
+      const result = document.getElementById("locale-loading-result");
+      let preference;
+      let passed = false;
+      try {
+        await locale.init();
+        preference = locale.preference;
+        await locale.setPreference("ar");
+        if (locale.error || document.documentElement.lang !== "ar" || document.documentElement.dir !== "rtl") throw new Error("Arabic catalog or RTL state failed");
+        if (t("settings.main.settings") === englishCatalog["settings.main.settings"]) throw new Error("Arabic text fell back to English");
+        await locale.setPreference("en");
+        if (locale.error || document.documentElement.dir !== "ltr" || t("settings.main.settings") !== englishCatalog["settings.main.settings"]) throw new Error("English switch failed");
+        passed = true;
+      } catch (error) { result.textContent = String(error); }
+      finally {
+        if (preference !== undefined) await locale.setPreference(preference);
+        if (locale.error) { passed = false; result.textContent = locale.errorText; }
+        result.dataset.pass = String(passed);
+        if (passed) result.textContent = "Arabic catalog, RTL, English switch and preference restoration passed";
+        result.dataset.complete = "true";
+      }
+    </script>
+  </body>
+</html>

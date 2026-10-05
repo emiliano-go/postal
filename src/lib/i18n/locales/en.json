@@ -1,4 +1,11 @@
 {
+  "chat.pinned_messages": "Pinned messages",
+  "chat.pinned_position": "{index} of {count}",
+  "chat.previous_pin": "Previous pinned message",
+  "chat.next_pin": "Next pinned message",
+  "chat.pinned_message": "Pinned message",
+  "error.plugin_resource_limit": "Plugin stopped after exceeding a resource limit.",
+  "settings.plugin_limits": "Windows limits: {memory} GiB of committed memory for the plugin and its children, {cpu} minutes of user-mode CPU time per process, and {processes} processes. Unix limits: {unixMemory} GiB of address space and {cpu} minutes of CPU time per process. Address-space limits can reject allocations without stopping the process; effectiveness on macOS depends on the platform. Unix cannot enforce a per-plugin child count. GPU allocations are outside these limits.",
   "error.message_store_corrupt": "The local message store is damaged. Open Settings → About to preserve it and start a fresh store.",
   "error.message_store_health_failed": "Could not check the local message store. Review the technical details; no recovery was performed.",
   "error.message_store_not_corrupt": "This message store has not been diagnosed as damaged. Recovery was not performed.",

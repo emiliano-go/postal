@@ -26,6 +26,8 @@
     onsettings,
     onjumpmention,
     onpinnedjump,
+    onpinnedprevious = () => {},
+    onpinnednext = () => {},
     onclearchat,
     ondeletechat,
   }: {
@@ -40,7 +42,7 @@
     presenceText: string | null;
     mentionTotal: number;
     mentionCursor: number;
-    pinned: { id: string; author: string; body: string } | null;
+    pinned: { id: string; author: string; body: string; position: number; count: number } | null;
     ongroupinfo: () => void;
     onsearch: () => void;
     ongallery: () => void;
@@ -48,6 +50,8 @@
     onsettings: () => void;
     onjumpmention: () => void;
     onpinnedjump: (id: string) => void;
+    onpinnedprevious?: () => void;
+    onpinnednext?: () => void;
     onclearchat: () => void;
     ondeletechat: () => void;
   } = $props();
@@ -167,13 +171,19 @@
   }} />
 
 {#if pinned}
-  <button class="pinned-bar" onclick={() => onpinnedjump(pinned.id)}>
-    <Icon name="pin" size={16} />
-    <span class="pinned-text">
-      <strong>{pinned.author}:</strong>
-      {pinned.body}
-    </span>
-  </button>
+  <div class="pinned-bar" role="group" aria-label={t("chat.pinned_messages")}>
+    <Button variant="icon" icon="chevronLeft" iconSize={16} title={t("chat.previous_pin")} aria-label={t("chat.previous_pin")} disabled={pinned.count < 2} onclick={onpinnedprevious} />
+    <button class="pinned-body" title={t("chat.pinned_position", { index: pinned.position, count: pinned.count })}
+      aria-describedby="pinned-message-position" onclick={() => onpinnedjump(pinned.id)}>
+      <Icon name="pin" size={16} />
+      <span class="pinned-text">
+        {#if pinned.author}<strong>{pinned.author}:</strong>{/if}
+        {pinned.body}
+      </span>
+    </button>
+    <span class="pin-position" id="pinned-message-position" aria-live="polite">{t("chat.pinned_position", { index: pinned.position, count: pinned.count })}</span>
+    <Button variant="icon" icon="chevronRight" iconSize={16} title={t("chat.next_pin")} aria-label={t("chat.next_pin")} disabled={pinned.count < 2} onclick={onpinnednext} />
+  </div>
 {/if}
 
 <style>
@@ -285,20 +295,31 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
     padding: 8px 16px;
-    border: 0;
     border-top: 1px solid var(--line);
     background: var(--surface);
     color: var(--muted);
+  }
+  .pinned-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
     font: inherit;
     font-size: 0.8438rem;
     text-align: start;
     cursor: pointer;
   }
-  .pinned-bar:hover {
+  .pinned-body:hover {
     background: var(--raised);
   }
+  .pin-position { flex: none; font-size: .75rem; white-space: nowrap; }
   .pinned-text {
     min-width: 0;
     overflow: hidden;

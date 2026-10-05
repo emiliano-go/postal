@@ -420,6 +420,8 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_generated_system,
     migrate_download_error,
     super::search_index::ensure,
+    super::history_pins::migrate_multiple,
+    super::history_pins::migrate_rank,
 ];
 
 fn migrate_generated_system(conn: &Connection) -> Result<()> {

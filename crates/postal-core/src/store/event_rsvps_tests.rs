@@ -149,10 +149,12 @@ fn metadata_survives_sparse_encrypted_replacement_and_specific_pin_expiry_is_kno
     assert_eq!(context.event.has_reminder, Some(true)); assert_eq!(context.event.reminder_offset_sec, Some(300));
     assert_eq!(context.invitation_id.as_deref(), Some("actual-invitation")); assert_eq!(context.event.is_scheduled_call, Some(true));
     store.apply_message_pin_update(CHAT, &super::super::history_pins::MessagePinUpdate {
-        target: ID.into(), remote: None, pinned: true, timestamp: 10, expires_at: None }, false).unwrap();
+        target: ID.into(), remote: None, pinned: true, timestamp: 10, expires_at: None,
+        clock: super::super::history_pins::PinClock::Server }, false).unwrap();
     assert!(store.marks(CHAT).unwrap().events[0].pinned);
     store.apply_message_pin_update(CHAT, &super::super::history_pins::MessagePinUpdate {
-        target: ID.into(), remote: None, pinned: true, timestamp: 20, expires_at: Some(1) }, false).unwrap();
+        target: ID.into(), remote: None, pinned: true, timestamp: 20, expires_at: Some(1),
+        clock: super::super::history_pins::PinClock::Server }, false).unwrap();
     assert!(!store.marks(CHAT).unwrap().events[0].pinned);
 }
 
