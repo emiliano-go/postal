@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Channels</title></head>
+  <body><div id="app"></div><script type="module">
+    import { mount } from "svelte";
+    import { applyTheme, BUILT_IN } from "$lib/utils/theme.svelte";
+    import { locale } from "$lib/i18n/locale.svelte";
+    import ChannelsPanelHarness from "./ChannelsPanelHarness.svelte";
+    await locale.init();
+    applyTheme(BUILT_IN.find((theme) => theme.id === "dark"));
+    mount(ChannelsPanelHarness, { target: document.getElementById("app") });
+  </script></body>
+</html>

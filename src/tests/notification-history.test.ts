@@ -6,6 +6,7 @@ import { get } from "svelte/store";
 import { groupNotificationBody, isChatMuted, notificationBody, notificationTitle, shouldNotify } from "../lib/utils/notifications.ts";
 import { keywordHidden } from "../lib/utils/keywords.ts";
 import type { StoredMessage } from "../lib/utils/models.ts";
+import type { ChannelSummary } from "../lib/utils/wire.ts";
 import { appendHistory, historyKey, loadHistory, saveHistory } from "../lib/notifications/history.ts";
 import type { HistoryStorage, NotificationHistoryEntry } from "../lib/notifications/history.ts";
 import { createNotificationHistory } from "../lib/notifications/history-store.ts";
@@ -158,6 +159,7 @@ function producer() {
   const history = createNotificationHistory(() => storage);
   const session = { activeAccount: "account-a", settings: { notifications_enabled: true } };
   const messages = { accountGeneration: 1 };
+  const channels = { view: { channels: [] as ChannelSummary[] } };
   const chats = { selectedChat: "", chats: [{ chat: "room@g.us", muted_until: 0 }], chatLabel: () => "Family" };
   const members = { displayName: (push: string | null, address: string) => push || address,
     senderName: () => "Ana", mentionName: (user: string) => user };
@@ -173,7 +175,7 @@ function producer() {
   const source = readFileSync(new URL("../lib/state/events.ts", import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
     .replace(/^import[\s\S]*?from\s+["'][^"']+["'];?\s*/gm, "").replace(/^export /gm, "");
-  const bindings = { session, messages, chats, members, keywords, notificationHistory: history,
+  const bindings = { session, messages, chats, channels, members, keywords, notificationHistory: history,
     t,
     shouldNotify, isChatMuted, notificationBody, notificationTitle, groupNotificationBody,
     isPlaceholder: (name: string) => /^\+?[\d\s]+$/.test(name),
@@ -188,7 +190,7 @@ function producer() {
     notifyForHint: (chat: string, id: string, fresh: boolean, scope?: { account: string; generation: number }) => Promise<void>;
     queueNotification: (work: (scope: { account: string; generation: number }) => Promise<void>) => void;
   };
-  return { ...functions, storage, history, session, messages, chats, rules, keywords, attempts,
+  return { ...functions, storage, history, session, messages, chats, channels, rules, keywords, attempts,
     setInvoke(handler: typeof invoke) { invoke = (command, ...args) => command === "chat_settings"
       ? Promise.resolve({ muted_until: storedMute ?? chats.chats[0]?.muted_until ?? 0, mute_at_all: storedAtAll }) : handler(command, ...args); },
     setStoredMute(until: number, atAll = false) { storedMute = until; storedAtAll = atAll; } };
@@ -199,6 +201,23 @@ function incoming(overrides: Partial<StoredMessage> = {}): StoredMessage {
     from_me: false, revoked: false, deleted: false, system_kind: null, media_kind: null, media_once_kind: null,
     spoiler: false, text: "Hello", sender_name: "Ana", ...overrides } as StoredMessage;
 }
+
+test("channel notifications respect subscriber mute and followed state", async () => {
+  const fixture = producer();
+  const channel: ChannelSummary = { jid: "123@newsletter", name: "Channel", description: null,
+    picture_url: null, subscriber_count: 4, followed: true, muted: true, favorite: false };
+  fixture.channels.view.channels = [channel];
+  const message = incoming({ chat: channel.jid });
+  await fixture.notifyForMessage(message, true);
+  assert.equal(fixture.attempts.length, 0);
+  channel.muted = false;
+  await fixture.notifyForMessage(message, true);
+  assert.equal(fixture.attempts.length, 1);
+  assert.equal(get(fixture.history).entries[0].chat_name, "Channel");
+  channel.followed = false;
+  await fixture.notifyForMessage(message, true);
+  assert.equal(fixture.attempts.length, 1);
+});
 
 test("verified notifications enter history before the OS attempt with safe previews and event time", async () => {
   for (const message of [incoming(), incoming({ spoiler: true, text: "SPOILER_SECRET" }),

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-unfollow-channel"
+description = "Enables the unfollow_channel command without any pre-configured scope."
+commands.allow = ["unfollow_channel"]
+
+[[permission]]
+identifier = "deny-unfollow-channel"
+description = "Denies the unfollow_channel command without any pre-configured scope."
+commands.deny = ["unfollow_channel"]

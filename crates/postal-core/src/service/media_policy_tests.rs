@@ -8,6 +8,7 @@ async fn handler() -> Inbound {
         store: store.clone(),
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         events: events.clone(),
+        channel_refreshes: Arc::default(),
         connected: Arc::default(),
         client_for_events: Arc::default(),
         media_dir: None,

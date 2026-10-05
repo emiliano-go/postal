@@ -60,6 +60,7 @@ source_chats AS MATERIALIZED (
     LEFT JOIN chat_state cs ON cs.jid=c.jid AND c.known=1
     WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
       AND (?5 IS NULL OR a.jid IS NOT NULL)
+      AND (?4='space_all' OR c.jid NOT LIKE '%@newsletter')
       AND (CASE ?4 WHEN 'archived' THEN COALESCE(cs.archived,0)=1
            WHEN 'favorites' THEN 1 WHEN 'space_all' THEN 1
            ELSE COALESCE(cs.archived,0)=0 END)
@@ -719,6 +720,27 @@ impl StoreWorker {
 #[cfg(test)]
 mod page_tests {
     use super::*;
+
+    #[test]
+    fn conversation_pages_skip_channels_before_limit_but_spaces_can_include_them() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        let conn = store.conn.lock().unwrap();
+        for at in 1..=140 {
+            conn.execute("INSERT INTO chats(jid,last_message_at) VALUES (?1,?2)",
+                params![format!("{at}@newsletter"), at + 1000]).unwrap();
+        }
+        for jid in ["a@s.whatsapp.net", "b@s.whatsapp.net"] {
+            conn.execute("INSERT INTO chats(jid,last_message_at) VALUES (?1,1)", [jid]).unwrap();
+        }
+        drop(conn);
+        let page = store.chats_page(false, "all", None, false, None, 2).unwrap();
+        assert_eq!(page.rows.iter().map(|row| row.chat.as_str()).collect::<Vec<_>>(), ["a@s.whatsapp.net", "b@s.whatsapp.net"]);
+        assert!(page.next_cursor.is_none());
+        assert_eq!(store.chats().unwrap().len(), 142);
+        let selected = vec!["1@newsletter".to_owned(), "a@s.whatsapp.net".to_owned()];
+        let space = store.chats_page(false, "space_all", Some(&selected), true, None, 2).unwrap();
+        assert_eq!(space.rows.iter().map(|row| row.chat.as_str()).collect::<Vec<_>>(), ["1@newsletter", "a@s.whatsapp.net"]);
+    }
 
     #[test]
     fn removed_or_reordered_anchor_keeps_the_remaining_sort_suffix() {

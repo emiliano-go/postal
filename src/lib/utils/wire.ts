@@ -28,6 +28,9 @@ export type CachedMemberGroup = { chat: string, subject: string | null, observed
 export type CachedSpaceGroup = { jid: string, subject: string | null, parent: string | null, community: boolean, announcements: boolean, };
 export type CallOutcome = "connected" | "rejected" | "cancelled" | "accepted_elsewhere" | "missed" | "invalid" | "unavailable" | "upcoming" | "failed" | "abandoned" | "ongoing" | "unknown";
 export type CallRecord = { call_id: string, creator_jid: string, peer_jid: string | null, group_jid: string | null, chat: string | null, from_me: boolean, is_video: boolean | null, outcome: CallOutcome, outcome_raw: number | null, call_type_raw: number | null, start_time_raw: string | null, duration_raw: string | null, mutation_at_ms: number, from_full_sync: boolean, };
+export type ChannelPage = { messages: Array<StoredMessage>, next_before: string | null, has_more: boolean, };
+export type ChannelSummary = { jid: string, name: string, description: string | null, picture_url: string | null, subscriber_count: number, muted: boolean, followed: boolean, favorite: boolean, };
+export type ChannelView = { channels: Array<ChannelSummary>, synced_at: number | null, };
 export type ChatLabelAssociation = { label_id: string, chat: string, };
 export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, pinned_messages: Array<string>, polls: Array<Poll>, events: Array<Event>,
 /**
@@ -410,7 +413,7 @@ unavailable: boolean,
 /**
  * The server's own retry delay, when it named one.
  */
-backoff_secs: number | null, } | { "kind": "connected" } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean,
+backoff_secs: number | null, } | { "kind": "connected" } | { "kind": "channelsChanged" } | { "kind": "channelMessagesChanged", jid: string, } | { "kind": "syncHealthChanged", automatic: boolean, } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean,
 /**
  * What changed, so the UI knows whether a refetch is needed.
  */
@@ -552,6 +555,12 @@ system_kind: string | null,
  */
 system_params: Array<string>, };
 export type StoredTranscript = { chat: string, id: string, text: string, language: string | null, provider: string, created_at: number, };
+export type SyncCollection = "critical_block" | "critical_unblock_low" | "regular" | "regular_high" | "regular_low";
+export type SyncCollectionHealth = { collection: SyncCollection, status: SyncStatus, version: number | null, last_success_at: number | null, error: string | null, };
+export type SyncHealthView = { collections: Array<SyncCollectionHealth>, busy: boolean, automatic_running: boolean, automatic_attempted: boolean, last_report: SyncRepairReport | null, last_error: string | null, storage_error: string | null, };
+export type SyncMode = "incremental" | "full";
+export type SyncRepairReport = { requested: Array<SyncCollection>, mode: SyncMode, synced: Array<SyncCollection>, retryable: Array<SyncCollection>, fatal: Array<SyncCollection>, skipped: Array<SyncCollection>, unreported: Array<SyncCollection>, at: number, automatic: boolean, storage_error: string | null, };
+export type SyncStatus = "unknown" | "uninitialized" | "synced" | "retryable" | "fatal" | "skipped" | "dirty";
 export type Target = { chat: string, id: string, sender: string, fromMe: boolean, };
 export type TranscriptionConfig = { data_directory: string | null, whisper_executable: string | null, decoder_executable: string | null, model: string | null, model_sha256: string | null, language: string | null, cloud_consent: boolean, api_key: string | null, timeout_secs: number | null, idle_timeout_secs: number | null, };
 export type TranscriptionContribution = { id: string, providers: Array<TranscriptionProvider>, };

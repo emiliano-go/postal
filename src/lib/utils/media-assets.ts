@@ -2,7 +2,7 @@ type Authorize = (paths: string[]) => Promise<Record<string, string | null>>;
 const FIELDS = new Set(["media_path", "reply_to_path", "reply_to_thumb", "media_thumb", "path", "tray_path", "picture", "avatar"]);
 const SCALARS = new Set(["avatar", "save_sticker", "download_sticker", "playable_audio", "playable_video"]);
 const DTO_COMMANDS = new Set(["messages", "message_page", "starred_messages", "pings", "search_messages", "switcher_messages",
-  "gallery_page", "sticker_library", "sticker_pack", "invite_info", "admin_reports"]);
+  "gallery_page", "sticker_library", "sticker_pack", "invite_info", "admin_reports", "channel_messages"]);
 
 function absolutePath(value: unknown): value is string {
   return typeof value === "string" && /^(?:[a-z]:[\\/]|\\\\|\/)/i.test(value);

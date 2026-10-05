@@ -17,6 +17,7 @@ pub(super) async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
         events, connected: Arc::default(), client_for_events: Arc::default(), media_dir: None,
         group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
         message_capping_check: Arc::default(),
+        channel_refreshes: Arc::default(),
         media_downloads, sync_progress: Arc::default(),
         media_auto_download: Arc::default(), keep_archived: Arc::default(), keep_view_once: Arc::default(),
         one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),

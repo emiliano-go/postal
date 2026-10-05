@@ -422,6 +422,7 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::search_index::ensure,
     super::history_pins::migrate_multiple,
     super::history_pins::migrate_rank,
+    super::channels::migrate,
 ];
 
 fn migrate_generated_system(conn: &Connection) -> Result<()> {

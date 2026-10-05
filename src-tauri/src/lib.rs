@@ -42,6 +42,8 @@ mod group_requests;
 mod scheduled;
 mod transcription;
 mod notifications;
+mod channels;
+mod sync_health;
 mod labels;
 mod group_audit;
 mod member_profiles;
@@ -294,6 +296,16 @@ macro_rules! postal_commands {
             notifications::chat_sound_muted,
             notifications::set_chat_sound_muted,
             notifications::show_chat_notification,
+            channels::channels,
+            channels::refresh_channels,
+            channels::channel_metadata,
+            channels::follow_channel,
+            channels::unfollow_channel,
+            channels::set_channel_muted,
+            channels::set_channel_favorite,
+            channels::channel_messages,
+            sync_health::sync_health,
+            sync_health::repair_sync,
             labels::labels_view,
             labels::save_label,
             labels::delete_label,

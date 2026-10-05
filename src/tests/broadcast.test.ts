@@ -33,7 +33,7 @@ test("broadcast destination guard excludes status and ordinary destinations", ()
     assert.equal(broadcastSendReason(chat), BROADCAST_SEND_REASON);
     assert.throws(() => guardBroadcastSend(chat), { message: BROADCAST_SEND_REASON });
   }
-  for (const chat of [null, undefined, "", "status@broadcast", "123@lid", "123@s.whatsapp.net", "123@g.us", "123@newsletter", "123@broadcast.example"]) {
+  for (const chat of [null, undefined, "", "status@broadcast", "123@lid", "123@s.whatsapp.net", "123@g.us", "123@broadcast.example"]) {
     assert.equal(isBroadcastList(chat), false);
     assert.equal(broadcastSendReason(chat), null);
     assert.doesNotThrow(() => guardBroadcastSend(chat));
@@ -221,6 +221,13 @@ test("disabled sending preserves access to local receipt and typing controls thr
   }
   assert.equal(receipts, 1); assert.equal(typing, 1);
   context.account = null; context.closeTools(); context.openTools(); assert.equal(context.toolsMenu, false);
+});
+
+test("channel destinations reject shared send paths", () => {
+  const chat = "123@newsletter";
+  assert.equal(isBroadcastList(chat), false);
+  assert.equal(broadcastSendReason(chat), translate("channels.read_only"));
+  assert.throws(() => guardBroadcastSend(chat), { message: translate("channels.read_only") });
 });
 
 test("voice finish cannot send while disabled or after permission changes during stop", () => {

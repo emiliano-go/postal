@@ -6,6 +6,8 @@ pub fn visit_wire_types(visitor: &mut impl TypeVisitor) {
     }
     roots!(
         crate::service::ServiceEvent, crate::service::Profile, crate::service::GroupInfo,
+        crate::store::channels::ChannelSummary, crate::store::channels::ChannelView, crate::service::ChannelPage,
+        crate::service::SyncHealthView, crate::service::SyncRepairReport, crate::service::SyncMode,
         crate::service::ParticipantChange, crate::service::SearchResult, crate::service::GroupKind,
         crate::service::InviteInfo, crate::service::UserProfile, crate::service::AdminReport,
         crate::service::GroupHistoryOffer, crate::service::GroupHistoryResult,

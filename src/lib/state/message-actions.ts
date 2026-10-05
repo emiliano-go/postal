@@ -250,7 +250,8 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
     else if (rule.when(ctx)) divided.add(rule.id);
   }
   const items: MenuItem[] = [];
-  for (const id of MESSAGE_MENU_ORDER) {
+  const order: readonly MenuId[] = m.chat.endsWith("@newsletter") ? ["reactions", "copy", "media"] : MESSAGE_MENU_ORDER;
+  for (const id of order) {
     const built = MENU_BUILDERS[id](ctx);
     if (!built) continue;
     const list = Array.isArray(built) ? built : [built];

@@ -68,6 +68,9 @@
   import PairingView from "$lib/settings/PairingView.svelte";
   import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
+  import ChannelsPanel from "$lib/chat/ChannelsPanel.svelte";
+  import ChannelActions from "$lib/chat/ChannelActions.svelte";
+  import { channels } from "$lib/state/channels.svelte";
   import MessageList from "$lib/messages/MessageList.svelte";
   import ComposerBar from "$lib/composer/ComposerBar.svelte";
   import AttachmentRecoveryPanel from "$lib/composer/AttachmentRecoveryPanel.svelte";
@@ -136,6 +139,19 @@
   // Accessibility: first-launch prompt state and the polite live region.
   let a11yPromptOpen = $state(false);
   let helpOpen = $state(false);
+  let showChannels = $state(false);
+  $effect(() => {
+    const account = session.activeAccount, generation = messages.accountGeneration, connected = session.connected;
+    untrack(() => { void activateChannels(account, generation, connected); });
+  });
+  async function activateChannels(account: string | null, generation: number, connected: boolean) {
+    await channels.activate(account, generation, connected);
+    const chat = chats.selectedChat;
+    const current = () => account === session.activeAccount && generation === messages.accountGeneration && session.connected;
+    if (!account || !connected || !current() || !chat?.endsWith("@newsletter")) return;
+    await channels.pageMessages(account, generation, chat, 50, true);
+    if (current() && chats.selectedChat === chat && messages.atLatest && !messages.loadingOlder) await messages.reloadMessages(chat);
+  }
   let helpSeen = $state(helpDismissed());
   let helpDialog = $state<HTMLDialogElement>();
   $effect(() => {
@@ -377,6 +393,7 @@
 
   async function openChat(chat: string, jumpToMention = false, label: string | null = null) {
     ui.showInbox = false;
+    showChannels = false;
     const opening = ++chatOpenSeq;
     const account = messages.accountGeneration;
     const current = () => opening === chatOpenSeq && account === messages.accountGeneration && chats.selectedChat === chat;
@@ -1575,7 +1592,7 @@
 
 <!-- Window-level so a paste/drop anywhere cannot navigate the webview. -->
 <svelte:window
-  onpaste={(event) => { if (!isBroadcastList(chats.selectedChat)) onPaste(event); }}
+  onpaste={(event) => { if (!isBroadcastList(chats.selectedChat) && !chats.selectedChat?.endsWith("@newsletter")) onPaste(event); }}
   onclick={(e) => {
     if (ui.accountMenu && !(e.target as Element).closest?.(".user-panel")) ui.accountMenu = false;
   }}
@@ -1590,7 +1607,7 @@
   onblur={() => session.setOnline(false)}
   ondragover={(e) => e.preventDefault()}
   ondrop={(event) => {
-    if (isBroadcastList(chats.selectedChat)) { event.preventDefault(); return; }
+    if (isBroadcastList(chats.selectedChat) || chats.selectedChat?.endsWith("@newsletter")) { event.preventDefault(); return; }
     onDrop(event);
   }}
 />
@@ -1696,7 +1713,8 @@
       onmarkallread={markAllRead}
       onnewgroup={() => (ui.newGroup = true)}
       onnewcontact={() => (newContact = true)}
-      oninbox={() => { ui.showInbox = !ui.showInbox; void labels.refresh(); }}
+      oninbox={() => { showChannels = false; ui.showInbox = !ui.showInbox; void labels.refresh(); }}
+      onchannels={() => { showChannels = true; ui.showInbox = false; }}
       onlabels={() => { ui.manageLabels = true; void labels.refresh(); }}
       onchatlabels={(chat) => { ui.labelTargets = [{ chat }]; void labels.refresh(); }}
       bind:labelFilter={chats.labelFilter}
@@ -1729,7 +1747,9 @@
     </ChatSidebar>
 
     <section class="conversation" aria-label={t("page.conversation")}>
-      {#if ui.showInbox}
+      {#if showChannels}
+        <ChannelsPanel account={session.activeAccount} generation={messages.accountGeneration} connected={session.connected} onOpen={(jid) => void openChat(jid)} />
+      {:else if ui.showInbox}
         <UnifiedInbox account={session.activeAccount} requestKey={`${messages.accountGeneration}:${inboxSeedKey}`} connected={session.connected}
           initialFilters={inboxSeed} onfilterschange={(filters) => { currentInboxFilters = { ...filters }; }}
           chats={inboxChats} labels={labels.loaded ? labels.view.labels : null} {labelsByChat}
@@ -1742,19 +1762,24 @@
           onaction={inboxAction} onretry={() => { void chats.refreshChats(); void labels.refresh(); }} />
       {:else if chats.selectedChat}
         {@const selectedChat = chats.selectedChat}
+        {@const isChannel = selectedChat.endsWith("@newsletter")}
+        {@const channelAccount = session.activeAccount}
+        {@const channelGeneration = messages.accountGeneration}
+        {@const channel = channels.view?.channels.find((row) => row.jid === selectedChat) ?? (channels.preview?.jid === selectedChat ? channels.preview : null)}
         {@const storedTitle = chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride}
-        {@const title = isBroadcastList(selectedChat) ? storedTitle || t("page.broadcast_list") : members.displayName(storedTitle, selectedChat)}
-        {@const typingNow = isBroadcastList(selectedChat) ? null : members.typingLabel(selectedChat)}
+        {@const title = isChannel ? channel?.name || storedTitle || selectedChat : isBroadcastList(selectedChat) ? storedTitle || t("page.broadcast_list") : members.displayName(storedTitle, selectedChat)}
+        {@const typingNow = isChannel || isBroadcastList(selectedChat) ? null : members.typingLabel(selectedChat)}
         <ChatHeader
           {selectedChat}
           isGroup={selectedChat.endsWith("@g.us")}
           isBroadcast={isBroadcastList(selectedChat)}
+          {isChannel}
           {title}
-          avatar={chats.avatars[selectedChat] ?? null}
+          avatar={channel?.picture_url ?? chats.avatars[selectedChat] ?? null}
           {typingNow}
           {subtitle}
           groupContext={members.groupContext}
-          presenceText={isBroadcastList(selectedChat) ? null : members.presenceLabel(selectedChat)}
+          presenceText={isChannel || isBroadcastList(selectedChat) ? null : members.presenceLabel(selectedChat)}
           mentionTotal={messages.mentionQueue.length}
           mentionCursor={messages.mentionCursor}
           pinned={pinnedView}
@@ -1776,11 +1801,20 @@
           onpinnednext={() => stepPinned(1)}
           onclearchat={() => (ui.chatConfirm = { kind: "clear", chat: selectedChat })}
           ondeletechat={() => (ui.chatConfirm = { kind: "delete", chat: selectedChat })} />
+        {#if isChannel && channelAccount}
+          <ChannelActions {channel} busy={channels.busy === selectedChat} disabled={!session.connected} compact
+            onfollow={() => void channels.follow(channelAccount, channelGeneration, selectedChat)}
+            onunfollow={() => void channels.unfollow(channelAccount, channelGeneration, selectedChat)}
+            onmute={(muted) => void channels.setMuted(channelAccount, channelGeneration, selectedChat, muted)}
+            onfavorite={(favorite) => void channels.setFavorite(channelAccount, channelGeneration, selectedChat, favorite)} />
+          {#if channels.error}<p role="alert">{channels.error.message}</p>{/if}
+        {/if}
 
         <div class="list-wrap" id="message-region" role="log" aria-label={t("settings.a11y.live_region")} tabindex="-1">
         <MessageList
           messages={messages.ordered}
           isGroup={selectedChat.endsWith("@g.us")}
+          readOnly={isChannel}
           switching={ui.switching}
           bind:scroller
           bind:this={messageList}
@@ -1953,7 +1987,7 @@
               ui.bulkDelete = null;
               ui.emojiFor = null;
             }} />
-        {:else}
+        {:else if !isChannel}
           <AttachmentRecoveryPanel records={composer.currentAttachmentRecoveries}
             onrestore={(key) => { const record = findRecovery(composer.currentAttachmentRecoveries, key); if (record) composer.restoreKnownUnsent(record.context.chat); }}
             ondismiss={(key) => { const record = findRecovery(composer.currentAttachmentRecoveries, key); if (record) composer.discardAttachmentRecovery(record); }}
@@ -2034,7 +2068,9 @@
             typingHidden={composer.typingHidden} />
         {/if}
 
-        {#if isBroadcastList(selectedChat)}
+        {#if isChannel}
+          <div class="read-only" role="status">{t("channels.read_only")}</div>
+        {:else if isBroadcastList(selectedChat)}
           <div class="read-only" role="status"><Icon name="volume" size={16} />{broadcastSendReason(selectedChat)}</div>
         {:else if members.chatGroup && !members.chatGroup.can_send}
           <div class="read-only" role="status">
@@ -2068,7 +2104,7 @@
     y={ui.menu.y}
     items={menuItems(m)}
     reactions={quickReactions}
-    reactionReason={broadcastSendReason(m.chat)}
+    reactionReason={m.chat.endsWith("@newsletter") ? t("channels.read_only") : broadcastSendReason(m.chat)}
     current={messages.reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
     onreact={(emoji) => reactMessages([m], emoji)}
     onmore={openEmojiFor}

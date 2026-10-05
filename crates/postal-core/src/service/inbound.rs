@@ -22,6 +22,7 @@ pub(super) struct Inbound {
     pub(super) groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>>,
     pub(super) older_waits: Arc<Mutex<OlderWaits>>,
     pub(super) message_capping_check: Arc<Mutex<std::collections::HashMap<String, std::time::Instant>>>,
+    pub(super) channel_refreshes: Arc<Mutex<std::collections::HashSet<String>>>,
     pub(super) media_downloads: MediaDownloadQueue,
     pub(super) sync_progress: Arc<Mutex<SyncProgress>>,
     pub(super) media_auto_download: Arc<RwLock<crate::store::media_policy::MediaAutoDownload>>,
@@ -617,6 +618,14 @@ impl Inbound {
         if self.one_time_only {
             if !decoded_message(&inbound.message).view_once { return; }
             *ingested += 1;
+        }
+        if inbound.info.source.chat.is_newsletter() {
+            if channels::apply_live_post(ctx.store, inbound, ctx.client.clone(), ctx.media_dir.clone(),
+                &self.events, &self.channel_refreshes).await {
+                ctx.touched.push(inbound.info.source.chat.to_non_ad().to_string());
+                *ingested += 1;
+            }
+            return;
         }
         let Some(incoming) = self.resolve_incoming(inbound, ctx, true).await else { return };
         match self.secret_edits.apply(ctx.store, inbound, &incoming.chat, &ctx.own).await {
@@ -1285,7 +1294,7 @@ mod contact_identity_tests {
             message_capping_check: Arc::default(),
             media_downloads: MediaDownloadQueue::start(Arc::default(), store.clone(), events),
             sync_progress: Arc::default(), media_auto_download: Arc::default(),
-            keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
+            keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(), channel_refreshes: Arc::default(),
         };
         let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), mark_chats: Mutex::new(std::collections::HashSet::new()), broadcast_chats: Mutex::new(std::collections::HashSet::new()), sticker_changes: AtomicBool::new(false), live: true };
         store.set_lid_pn("77", "59891954564").await.unwrap();

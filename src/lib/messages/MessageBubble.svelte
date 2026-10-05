@@ -96,7 +96,7 @@
   class:picking={vm.picking}
   class:picked={vm.picked}
   ondblclick={() => {
-    if (!vm.picking) api.onreplydraft(message);
+    if (!vm.picking && !message.chat.endsWith("@newsletter")) api.onreplydraft(message);
   }}
   oncontextmenu={(e) => {
     e.preventDefault();

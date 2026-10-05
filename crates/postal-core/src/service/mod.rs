@@ -37,6 +37,10 @@ use crate::{
 mod audio;
 mod connection;
 mod contacts;
+mod channels;
+pub use channels::ChannelPage;
+mod sync_health;
+pub use sync_health::{SyncCollection, SyncMode, SyncStatus, SyncCollectionHealth, SyncHealthView, SyncRepairReport};
 mod usernames;
 pub use usernames::UsernameLookupResult;
 mod spaces;
@@ -231,6 +235,9 @@ pub enum ServiceEvent {
         backoff_secs: Option<u64>,
     },
     Connected,
+    ChannelsChanged,
+    ChannelMessagesChanged { jid: String },
+    SyncHealthChanged { automatic: bool },
     Disconnected,
     /// WhatsApp revoked this device; the stored session can never sign in again.
     LoggedOut,
@@ -604,6 +611,8 @@ impl ServiceConfig {
 ///
 /// Dropping this stops the background task and closes the stores.
 pub struct WhatsAppService {
+    channel_operations: tokio::sync::Mutex<()>,
+    sync_health: Arc<sync_health::SyncHealthState>,
     favorites: Favorites,
     pins: Pins,
     history_shares: group_history::PendingHistoryShares,

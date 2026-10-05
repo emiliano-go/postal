@@ -10,6 +10,7 @@
     selectedChat,
     isGroup,
     isBroadcast = false,
+    isChannel = false,
     title,
     avatar,
     typingNow,
@@ -34,6 +35,7 @@
     selectedChat: string;
     isGroup: boolean;
     isBroadcast?: boolean;
+    isChannel?: boolean;
     title: string;
     avatar: string | null;
     typingNow: string | null;
@@ -70,7 +72,10 @@
 
 <header class="chat-header">
   <div class="chat-heading">
-    {#if isGroup}
+    {#if isChannel}
+      <div class="heading-avatar"><Avatar src={avatar} label={title} seed={selectedChat} /></div>
+      <div class="chat-title">{title}<span class="chat-sub">{t("channels.title")}</span></div>
+    {:else if isGroup}
       <button class="heading-avatar" title={t("group.info")} aria-label={t("group.info")} onclick={ongroupinfo}
         ><Avatar src={avatar} label={title} seed={selectedChat} /></button
       >
@@ -115,6 +120,7 @@
         aria-label={t("chat.your_mentions")}
         onclick={onpings} />
     {/if}
+    {#if !isChannel}
     <Button
       variant="icon"
       icon="sliders"
@@ -153,6 +159,7 @@
         </div>
       {/if}
     </div>
+    {/if}
   </div>
   {#if mentionTotal > 0}
     <button class="jump-mention" title={t("chat.jump_mention")} onclick={onjumpmention}>

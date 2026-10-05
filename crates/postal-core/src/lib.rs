@@ -25,6 +25,8 @@ use anyhow::Result;
 pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
+    SyncCollection, SyncMode, SyncStatus, SyncCollectionHealth, SyncHealthView, SyncRepairReport,
+    ChannelPage,
     UsernameLookupResult,
     CachedSpaceGroup, ResolvedSpaceItem, Space, SpaceAction, SpaceArchive, SpaceInboxFilters,
     SpaceItem, SpaceResolution, SpaceSelection, SpaceSnapshot, SpaceTarget,
@@ -40,6 +42,7 @@ pub use store::{
     ChatMarks, ChatPage, ChatRetention, ChatSummary, MessageReceipt, MessageStore, NewEvent, DiskRetention, RetentionLimit, StoredMessage,
     ViewOnce, Sticker, StickerPack,
 };
+pub use store::channels::{ChannelSummary, ChannelView};
 
 /// Renders a pairing code as an SVG string for the UI to display.
 ///

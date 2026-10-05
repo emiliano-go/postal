@@ -437,6 +437,7 @@ impl SessionState {
             keep_archived: self.keep_archived.clone(),
             keep_view_once: self.keep_view_once.clone(),
             one_time_only: config.one_time_only,
+            channel_refreshes: Arc::default(),
             tally: Arc::new(CompanionTally::default()),
             secret_edits: self.secret_edits.clone(),
         }, media_downloads)
@@ -451,6 +452,7 @@ impl SessionState {
         inbound: Inbound,
         favorites: &Favorites,
         pins: &Pins,
+        sync_health: &Arc<sync_health::SyncHealthState>,
     ) -> Result<Bot> {
         // A one-time companion wants no history at all: chunks are
         // acknowledged and dropped, so a wake never stores them.
@@ -475,6 +477,7 @@ impl SessionState {
             .with_event_handler(favorites.handler())
             .with_event_handler(pins.handler(!config.one_time_only))
             .with_event_handler(self.secret_edits.handler())
+            .with_event_handler(sync_health.handler(!config.one_time_only))
             .on_qr_code({
                 let events = events.clone();
                 let qr_state = self.qr.clone();
@@ -758,6 +761,7 @@ impl WhatsAppService {
         let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
         let aliases = AliasWorker::open_with_key(&config.aliases_path, config.database_key.clone()).await?;
         let (events, initial_rx) = broadcast::channel(256);
+        let sync_health = sync_health::SyncHealthState::new(config.session_path.with_extension("sync-health.json"), events.clone());
         let favorites_path = if config.one_time_only { Path::new(":memory:") } else { &config.favorites_path };
         let favorites = Favorites::open_with_key(favorites_path, events.clone(), config.database_key.clone()).await?;
         let pins = Pins::open(&store, events.clone()).await?;
@@ -767,8 +771,9 @@ impl WhatsAppService {
 
         let states = SessionState::new(&config);
         let (inbound, media_downloads) = states.inbound(&store, &disk_retention, &events, &config);
-        let bot = states.build_bot(&config, &store, &events, inbound, &favorites, &pins).await?;
+        let bot = states.build_bot(&config, &store, &events, inbound, &favorites, &pins, &sync_health).await?;
         let client = bot.client();
+        sync_health.activate(&client);
         states.secret_edits.activate(&client);
         // In-memory only, so it is set on every start. Android metadata is what
         // makes the server treat this companion as trusted and hand over
@@ -793,6 +798,8 @@ impl WhatsAppService {
 
         Ok((
             Self {
+                sync_health,
+                channel_operations: Default::default(),
                 history_shares: Default::default(),
                 client,
                 store,

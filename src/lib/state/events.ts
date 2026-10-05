@@ -18,6 +18,7 @@ import {
 } from "$lib/utils/notifications";
 import { isPlaceholder } from "$lib/utils/phone";
 import { chats } from "./chats.svelte";
+import { channels } from "./channels.svelte";
 import { labels } from "./labels.svelte";
 import { composer } from "./composer.svelte";
 import { favorites } from "./favorites.svelte";
@@ -179,6 +180,10 @@ function isOpenChat(chat: string): boolean {
 }
 
 async function notificationMute(chat: string): Promise<{ mutedUntil: number; muteAtAll: boolean } | null> {
+  if (chat.endsWith("@newsletter")) {
+    const channel = channels.view?.channels.find((row) => row.jid === chat);
+    return channel ? { mutedUntil: channel.muted || !channel.followed ? Number.MAX_SAFE_INTEGER : 0, muteAtAll: false } : null;
+  }
   try {
     const settings = await invoke<ChatSettings>("chat_settings", { chat });
     return { mutedUntil: settings.muted_until, muteAtAll: settings.mute_at_all };
@@ -206,6 +211,8 @@ function notifySenderName(message: StoredMessage): string {
 
 /** Chat name for a notification, from the list or the address. */
 function notifyChatName(chat: string): string {
+  const channel = channels.view?.channels.find((row) => row.jid === chat);
+  if (channel) return channel.name || chat;
   const known = chats.chats.find((c) => c.chat === chat);
   if (known) return chats.chatLabel(known);
   return members.displayName(null, chat);
@@ -313,6 +320,7 @@ function queueNotification(work: (scope: NotificationScope) => Promise<void>) {
 
 /** When each unnamed group's subject was last asked for; the core backs off failed ones. */
 const askedSubjects = new Map<string, number>();
+let automaticRepairNoticeScope: string | null = null;
 
 export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHost) {
   log("debug", `event ${payload.kind}: uiUnlocked=${session.uiUnlocked} syncPending=${session.syncPending} historyActive=${messages.historyActive} chatsDirty=${chatsDirty} messagesDirty=${messagesDirty}`);
@@ -460,6 +468,23 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
         } catch {
           // Announcements must never break event handling.
         }
+      }
+      break;
+    }
+    case "channelsChanged":
+      if (session.activeAccount) void channels.load(session.activeAccount, messages.accountGeneration);
+      break;
+    case "channelMessagesChanged":
+      if (payload.jid === chats.selectedChat && messages.atLatest && !messages.loadingOlder) {
+        queueReloadMessages(host, payload.jid, true, true);
+      }
+      break;
+    case "syncHealthChanged": {
+      void session.loadAccounts();
+      const scope = `${session.activeAccount}:${messages.accountGeneration}`;
+      if (payload.automatic && automaticRepairNoticeScope !== scope) {
+        automaticRepairNoticeScope = scope;
+        ui.notify(uiMessage("sync.auto_running"));
       }
       break;
     }

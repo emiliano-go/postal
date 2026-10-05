@@ -35,6 +35,7 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
     let media_downloads = MediaDownloadQueue::start(Arc::default(), store.clone(), events.clone());
     let inbound = Inbound {
         store, events, connected: Arc::default(), client_for_events: Arc::default(),
+        channel_refreshes: Arc::default(),
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(),
         older_waits: Arc::default(), media_downloads,
@@ -138,6 +139,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
         events,
         connected: Arc::default(),
         client_for_events: Arc::default(),
+        channel_refreshes: Arc::default(),
         media_dir: None,
         group_cache: Arc::default(),
         groups_cache: Arc::default(),

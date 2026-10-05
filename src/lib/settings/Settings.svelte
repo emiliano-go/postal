@@ -15,6 +15,7 @@
     | "chats"
     | "spaces"
     | "notifications"
+    | "sync"
     | "device"
     | "media"
     | "startup"
@@ -53,6 +54,7 @@
   import type { StickerLibrary, StickerResyncReport } from "$lib/utils/wire";
   import KeywordSettings from "$lib/settings/KeywordSettings.svelte";
   import NotificationHistory from "$lib/notifications/NotificationHistory.svelte";
+  import SyncHealth from "./SyncHealth.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
   import PhoneLink from "$lib/settings/PhoneLink.svelte";
   import { messages } from "$lib/state/messages.svelte";
@@ -233,6 +235,7 @@
     { id: "chats", label: t("settings.main.chats"), group: t("settings.main.messaging_group") },
     { id: "spaces", label: t("settings.main.spaces"), group: t("settings.main.messaging_group") },
     { id: "notifications", label: t("settings.main.notifications"), group: t("settings.main.messaging_group") },
+    { id: "sync", label: t("sync.title"), group: t("settings.main.messaging_group") },
     { id: "device", label: t("settings.main.device"), group: t("settings.main.data_group") },
     { id: "media", label: t("settings.main.media"), group: t("settings.main.messaging_group") },
     { id: "transcription", label: t("settings.main.transcription"), group: t("settings.main.messaging_group") },
@@ -645,6 +648,8 @@
   {#snippet pageHead()}
     {#if section === "linked"}
       <h2>{t("settings.main.linked")}</h2>
+    {:else if section === "sync"}
+      <h2>{t("sync.title")}</h2>
     {:else if section === "blocked"}
       <h2>{t("settings.main.blocked")}</h2>
     {:else if section === "contacts"}
@@ -1102,6 +1107,10 @@
             </div>
           </div>
           {#if spaceError}<p class="error-text" role="alert"><bdi>{localizedMessage(spaceError.descriptor)}</bdi></p>{/if}
+        {:else if section === "sync"}
+          <section data-setting-search-id="sync-center" tabindex="-1" aria-label={t("sync.title")}>
+            <SyncHealth account={active} connected={session.connected} />
+          </section>
         {:else if section === "notifications"}
           <label class="setting">
             <div>

@@ -85,6 +85,7 @@
     onnewgroup,
     onnewcontact = () => {},
     oninbox = () => {},
+    onchannels = () => {},
     onlabels = () => {},
     onchatlabels = () => {},
     labelFilter = $bindable(""),
@@ -101,6 +102,7 @@
     spacesContent,
   }: {
     spacesContent?: Snippet;
+    onchannels?: () => void;
     searchQuery: string;
     searchResults: SearchResult[];
     visibleChats: ChatSummary[];
@@ -515,6 +517,7 @@
 <aside class="chats" aria-label={t("nav.chats")}>
   <header>
     <h1 class="title">{t("nav.chats")}</h1>
+    <Button variant="icon" icon="message" iconSize={18} title={t("channels.title")} aria-label={t("channels.title")} onclick={onchannels} />
     <Button
       variant="icon"
       icon="at"

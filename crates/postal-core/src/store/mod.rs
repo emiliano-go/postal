@@ -13,6 +13,7 @@ const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 mod chats;
 pub use chats::ChatPage;
+pub mod channels;
 mod schema;
 pub mod recovery;
 mod search_index;

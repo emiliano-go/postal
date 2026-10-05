@@ -33,6 +33,7 @@
   let {
     messages,
     isGroup,
+    readOnly = false,
     switching,
     scroller = $bindable(),
     prepending = false,
@@ -110,6 +111,7 @@
     /** Oldest first, the order the conversation is drawn in. */
     messages: StoredMessage[];
     isGroup: boolean;
+    readOnly?: boolean;
     /** True while a newly opened chat's messages load, so the old ones fade out. */
     switching: boolean;
     scroller: HTMLDivElement | undefined;
@@ -200,9 +202,9 @@
     onopenchat,
     formatTime,
     namer,
-    onreplydraft,
+    onreplydraft: readOnly ? () => {} : onreplydraft,
     onmenu,
-    onpick,
+    onpick: readOnly ? () => {} : onpick,
     onjumpquoted,
     onrecoverquote,
     recovering,
@@ -210,11 +212,11 @@
     onopenviewer,
     onopenmedia,
     onopenquote,
-    onvote,
-    onrespond,
-    oneditrequest,
-    oncancelevent,
-    onreact,
+    onvote: readOnly ? () => {} : onvote,
+    onrespond: readOnly ? () => {} : onrespond,
+    oneditrequest: readOnly ? () => {} : oneditrequest,
+    oncancelevent: readOnly ? () => {} : oncancelevent,
+    onreact: readOnly ? () => {} : onreact,
     onopenreactions,
     onmarkplayed,
     onnextvoice,
@@ -416,11 +418,11 @@
     if (action === "menu") {
       const bubble = [...(viewport()?.querySelectorAll<HTMLElement>(".bubble[data-id]") ?? [])].find((item) => item.dataset.id === message.id);
       bubble?.querySelector<HTMLButtonElement>(".reply-btn")?.click();
-    } else if (action === "reply" && !picking && !message.revoked && !message.deleted) {
+    } else if (action === "reply" && !readOnly && !picking && !message.revoked && !message.deleted) {
       onreplydraft(message);
-    } else if (action === "star") {
+    } else if (action === "star" && !readOnly) {
       onstar?.(message);
-    } else if (action === "select" && !message.revoked && !message.deleted) {
+    } else if (action === "select" && !readOnly && !message.revoked && !message.deleted) {
       const count = Object.keys(picking ?? {}).length + (picking?.[message.id] ? -1 : 1);
       onpick(message);
       announceStatus(t("content.selected_count", { count }), true);
@@ -522,6 +524,12 @@
   // One capture listener for the list instead of one per row: picking and
   // ctrl-click intercept before any inner button sees the click.
   function captureClick(event: MouseEvent) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (readOnly && target?.closest(".poll .option, .event .answer, .event .owner button, .event .guests input")) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const row = (event.target as HTMLElement | null)?.closest?.<HTMLElement>(".msg-row");
     const id = row?.querySelector<HTMLElement>(".bubble[data-id]")?.dataset.id;
     if (!id) return;
@@ -536,7 +544,17 @@
     if (picking || event.ctrlKey || event.metaKey) {
       event.preventDefault();
       event.stopPropagation();
-      onpick(message, event.shiftKey);
+      if (!readOnly) onpick(message, event.shiftKey);
+    }
+  }
+
+  function captureReadOnlyKeydown(event: KeyboardEvent) {
+    if (!readOnly || event.key === "Tab") return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".event .guests input") ||
+      ((event.key === "Enter" || event.key === " ") && target?.closest(".poll .option, .event .answer, .event .owner button"))) {
+      event.preventDefault();
+      event.stopPropagation();
     }
   }
 </script>
@@ -547,6 +565,7 @@
   class="messages"
   class:switching={switching && messages.length > 0}
   class:group={isGroup}
+  class:read-only={readOnly}
   role="group"
   aria-label={t("content.message_rail_label")}
   aria-describedby="message-rail-shortcuts"
@@ -554,6 +573,7 @@
   tabindex="0"
   bind:this={scroller}
   onkeydown={onRailKeydown}
+  onkeydowncapture={captureReadOnlyKeydown}
   onclickcapture={captureClick}>
   <span class="visually-hidden" id="message-rail-shortcuts">{t("help.messages")}</span>
   {#if switching && messages.length === 0}
@@ -614,7 +634,7 @@
             </article>
           {:else if message.system_kind || isPollNotice(message)}
             <StructuredNotice {message} poll={polls.find((poll) => poll.id === message.id)} {namer}
-              picture={avatarOf} onvote={async (options) => { await onvote(message, options); }} highlighted={highlightedId === message.id || keywords.highlighted(message)} />
+              picture={avatarOf} onvote={async (options) => { if (!readOnly) await onvote(message, options); }} highlighted={highlightedId === message.id || keywords.highlighted(message)} />
           {:else}
             <MessageRow
               {message}
@@ -635,6 +655,10 @@
 </div>
 
 <style>
+  .messages.read-only :global(.poll .option) { cursor: default; }
+  .messages.read-only :global(.event .answers),
+  .messages.read-only :global(.event .owner),
+  .messages.read-only :global(.event .guests) { display: none; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .album-anchor { display: block; height: 0; }
   .messages {

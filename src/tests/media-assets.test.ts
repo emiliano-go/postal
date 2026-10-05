@@ -29,6 +29,20 @@ test("returned DTO media paths canonicalize together while nonmedia and web reso
   assert.deepEqual(response.strings, ["/media/unrelated.png"]);
 });
 
+test("channel history DTO media paths are authorized before reaching the reader", async () => {
+  const calls: string[][] = [];
+  const prepare = createMediaAssetPreparer(async (paths) => {
+    calls.push(paths);
+    return Object.fromEntries(paths.map((path) => [path, path.replace("\\alias\\", "\\canonical\\")]));
+  });
+  const page = { messages: [{ media_path: "C:\\alias\\channel.jpg", media_thumb: "C:\\alias\\thumb.jpg" }],
+    next_before: "older", has_more: true };
+  assert.equal(await prepare("channel_messages", page), page);
+  assert.deepEqual(calls, [["C:\\alias\\channel.jpg", "C:\\alias\\thumb.jpg"]]);
+  assert.equal(page.messages[0].media_path, "C:\\canonical\\channel.jpg");
+  assert.equal(page.messages[0].media_thumb, "C:\\canonical\\thumb.jpg");
+});
+
 test("scalar file commands and media-library arrays authorize only absolute returned paths", async () => {
   const calls: string[][] = [];
   const prepare = createMediaAssetPreparer(async (paths) => {

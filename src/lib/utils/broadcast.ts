@@ -11,6 +11,7 @@ export function broadcastSendReason(chat: string | null | undefined): string | n
 }
 
 export function broadcastSendError(chat: string | null | undefined) {
+  if (chat?.endsWith("@newsletter")) return uiError("channels.read_only");
   return isBroadcastList(chat) ? uiError("error.state.broadcast_send") : null;
 }
 

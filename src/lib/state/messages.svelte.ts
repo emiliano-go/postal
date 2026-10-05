@@ -5,6 +5,8 @@
 import { invoke } from "$lib/utils/ipc";
 import type { Marks, Reaction, ReactionGroup, StoredMessage } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
+import { session } from "./session.svelte";
+import { channels } from "./channels.svelte";
 import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } from "$lib/utils/message-window";
 import { isUnavailable } from "$lib/utils/message";
 import { keywords } from "./keywords.svelte";
@@ -27,6 +29,7 @@ export class MessagesState {
   private accountSeq = 0;
   private rowRequestSeq = 0;
   private rowRequests = new Map<string, number>();
+  private channelOlderRequest = 0;
   loadingOlder = $state(false);
   /** Set while a newer page is fetched at the bottom of the scrollback. */
   loadingNewer = $state(false);
@@ -443,6 +446,10 @@ export class MessagesState {
   async loadOlder(chat: string | null, auto = false) {
     if (!chat || chat !== this.chat || this.loadingOlder) return;
     this.loadingOlder = true;
+    if (chat.endsWith("@newsletter")) {
+      await this.loadOlderChannel(chat);
+      return;
+    }
     try {
       const added = await this.loadLocalOlder(chat);
       if (added === null) return;
@@ -461,6 +468,41 @@ export class MessagesState {
       await this.flushRefresh(chat);
       this.settleRecall();
       ui.fail(e);
+    }
+  }
+
+  private async loadOlderChannel(chat: string) {
+    const account = session.activeAccount, generation = this.accountSeq, request = ++this.channelOlderRequest;
+    const current = () => request === this.channelOlderRequest && account === session.activeAccount
+      && generation === this.accountSeq && chat === this.chat && this.loadingOlder;
+    try {
+      let added: number | null = null;
+      if (account && session.connected) {
+        while (current() && channels.hasMoreMessages(chat)) {
+          const page = await channels.pageMessages(account, generation, chat);
+          if (!current()) return;
+          if (!page) {
+            if (channels.error) ui.fail(channels.error);
+            break;
+          }
+          added = await this.loadLocalOlder(chat);
+          if (!current() || added === null) return;
+          if (added > 0 || page.messages.length === 0) break;
+        }
+      }
+      if (added === null) added = await this.loadLocalOlder(chat);
+      if (!current() || added === null) return;
+      this.loadingOlder = false;
+      if (added > 0) this.olderExhausted = false;
+      else if (account && session.connected && !channels.hasMoreMessages(chat)) this.olderExhausted = true;
+      await this.flushRefresh(chat);
+      this.settleRecall();
+    } catch (error) {
+      if (!current()) return;
+      this.loadingOlder = false;
+      await this.flushRefresh(chat);
+      this.settleRecall();
+      ui.fail(error);
     }
   }
 
@@ -529,6 +571,7 @@ export class MessagesState {
 
   /** Readies a fresh chat: pager reset, recall cancelled, autoplay cleared. */
   prepareChat(chat: string, limit = DEFAULT_MESSAGE_WINDOW) {
+    this.channelOlderRequest++;
     this.chat = chat;
     this.messageLimit = limit;
     this.window = new MessageWindow(limit);
@@ -556,6 +599,7 @@ export class MessagesState {
 
   /** Mirrors resetUi: the list and the mention queue are dropped. */
   resetAccount() {
+    this.channelOlderRequest++;
     this.accountSeq++;
     this.chat = null;
     this.refreshPending = false;

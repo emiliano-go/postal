@@ -163,6 +163,11 @@ impl WhatsAppService {
     /// Marks a chat's incoming messages as read, and with `receipts` tells
     /// their senders. Returns how many changed.
     pub async fn mark_read(&self, chat: &str, receipts: bool) -> Result<usize> {
+        if chat.ends_with("@newsletter") {
+            let changed = self.store.mark_read(chat).await?;
+            self.store.clear_marked_unread(chat).await?;
+            return Ok(changed);
+        }
         let unread = if receipts { self.store.unread_ids(chat).await? } else { Vec::new() };
         let changed = self.store.mark_read(chat).await?;
         self.send_read_receipts(chat, unread).await?;
@@ -180,6 +185,11 @@ impl WhatsAppService {
     /// Used when a chat is opened at its unread divider: only what has actually
     /// been scrolled past is read, so messages below stay unread.
     pub async fn mark_read_until(&self, chat: &str, id: &str, receipts: bool) -> Result<usize> {
+        if chat.ends_with("@newsletter") {
+            let changed = self.store.mark_read_until(chat, id).await?;
+            self.store.clear_marked_unread(chat).await?;
+            return Ok(changed);
+        }
         let unread = if receipts { self.store.unread_until(chat, id).await? } else { Vec::new() };
         let changed = self.store.mark_read_until(chat, id).await?;
         self.send_read_receipts(chat, unread).await?;

@@ -1,6 +1,7 @@
 import type { StorageFile, StorageReport, StorageCleanup } from "../../src/lib/utils/storage";
 import type { Marks, StoredMessage } from "../../src/lib/utils/models";
 import type { MessageCursor } from "../../src/lib/utils/message-window";
+import type { ChannelPage, ChannelSummary, ChannelView } from "../../src/lib/utils/wire";
 export const windowFixture = {
   archive: Array.from({ length: 350 }, (_, n) => ({ chat: "window@s", id: String(n).padStart(4, "0"), timestamp: 100, text: `Message ${n}` }) as StoredMessage),
   phoneRequests: 0, failure: false, deferNext: false, pending: [] as (() => void)[],
@@ -34,6 +35,15 @@ export const pinFixture = {
   calls: [] as { id: string; limit: number }[],
   failNextAnchor: "",
 };
+export const channelsFixture = {
+  view: { channels: [] as ChannelSummary[], synced_at: null } as ChannelView,
+  metadata: {} as Record<string, ChannelSummary>,
+  pages: {} as Record<string, ChannelPage>,
+  calls: [] as { command: string; args?: Record<string, unknown> }[],
+  failure: "",
+  defer: "",
+  pending: [] as (() => void)[],
+};
 export const selectionFixture = { calls: [] as { command: string; args: unknown }[], failure: false };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
   failChunk: false, failSend: false, afterChunk: null as (() => void) | null };
@@ -52,6 +62,61 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   previewFixture.calls.push(command);
+  if (["channels", "refresh_channels", "channel_metadata", "follow_channel", "unfollow_channel", "set_channel_muted", "set_channel_favorite", "channel_messages"].includes(command)) {
+    channelsFixture.calls.push({ command, args });
+    const complete = () => {
+      if (channelsFixture.failure === command) throw new Error(`Synthetic ${command} failure`);
+      const jid = String(args?.jid ?? "");
+      const stored = channelsFixture.view.channels.find((channel) => channel.jid === jid);
+      if (command === "channels" || command === "refresh_channels") return channelsFixture.view as T;
+      if (command === "channel_metadata") {
+        const channel = channelsFixture.metadata[jid];
+        if (!channel) throw new Error("Synthetic channel not found");
+        return channel as T;
+      }
+      if (command === "follow_channel") {
+        const channel = channelsFixture.metadata[jid] ?? stored;
+        if (!channel) throw new Error("Synthetic channel not found");
+        const followed = { ...channel, followed: true };
+        channelsFixture.view = { ...channelsFixture.view, channels: [...channelsFixture.view.channels.filter((row) => row.jid !== jid), followed] };
+        channelsFixture.metadata[jid] = followed;
+        return followed as T;
+      }
+      if (command === "unfollow_channel") {
+        channelsFixture.view = { ...channelsFixture.view, channels: channelsFixture.view.channels.map((channel) => channel.jid === jid ? { ...channel, followed: false } : channel) };
+        return undefined as T;
+      }
+      if (command === "set_channel_muted") {
+        const channel = channelsFixture.metadata[jid] ?? stored;
+        if (!channel) throw new Error("Synthetic channel not found");
+        const muted = { ...channel, muted: Boolean(args?.muted) };
+        channelsFixture.view = { ...channelsFixture.view, channels: channelsFixture.view.channels.map((row) => row.jid === jid ? muted : row) };
+        channelsFixture.metadata[jid] = muted;
+        return muted as T;
+      }
+      if (command === "set_channel_favorite") {
+        const channel = channelsFixture.metadata[jid] ?? stored;
+        if (!channel) throw new Error("Synthetic channel not found");
+        const favorite = { ...channel, favorite: Boolean(args?.favorite) };
+        channelsFixture.view = { ...channelsFixture.view, channels: channelsFixture.view.channels.map((row) => row.jid === jid ? favorite : row) };
+        channelsFixture.metadata[jid] = favorite;
+        return favorite as T;
+      }
+      const page = channelsFixture.pages[`${jid}:${String(args?.before ?? "")}`] ?? channelsFixture.pages[jid]
+        ?? { messages: [], next_before: null, has_more: false };
+      for (const message of page.messages) {
+        if (!windowFixture.archive.some((row) => row.chat === jid && row.id === message.id)) windowFixture.archive.push(message);
+      }
+      return page as T;
+    };
+    if (channelsFixture.defer === command) {
+      channelsFixture.defer = "";
+      return new Promise<T>((resolve, reject) => channelsFixture.pending.push(() => {
+        try { resolve(complete()); } catch (error) { reject(error); }
+      }));
+    }
+    return complete();
+  }
   if (command === "message_store_health") {
     storeFixture.healthCalls++;
     const health = { status: storeFixture.corrupt ? "corrupt" : "healthy", path: "synthetic/messages.db",

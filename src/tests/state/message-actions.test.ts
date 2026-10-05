@@ -557,6 +557,23 @@ test("the group and DM menus offer their entries, dividers never first", async (
   });
 });
 
+test("newsletter posts expose only view, copy, and media menu actions", async () => {
+  await withApp(async ({ menuItems, messages, ui, calls }) => {
+    messages.marks = { ...messages.marks, reactions: [
+      { target: "post", sender: "123@s.whatsapp.net", emoji: "👍" },
+    ] };
+    const post = { chat: "987@newsletter", id: "post", sender: "987@newsletter", from_me: false,
+      text: "Caption", media_kind: "image", revoked: false } as StoredMessage;
+    const items = menuItems(post, async () => {});
+    assert.deepEqual(labels(items), ["Copy", "Copy Image", "Open Image", "Reactions", "Save Image…"]);
+    items.find((item) => item.label === "Reactions")!.action();
+    assert.equal(ui.reactionsFor, post);
+    await items.find((item) => item.label === "Save Image…")!.action();
+    assert.deepEqual(calls.at(-1), { command: "message_media_action",
+      args: { chat: post.chat, id: post.id, action: "save" } });
+  });
+});
+
 test("image menu exports originals by message ID and protects deleted and view-once media", async () => {
   await withApp(async ({ menuItems, calls }) => {
     const message = { chat: "123@s.whatsapp.net", id: "photo", from_me: false,
