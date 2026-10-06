@@ -34,12 +34,11 @@ function fixture() {
   const requests: { username: string; key: string | undefined; result: ReturnType<typeof deferred<UsernameLookupResult>> }[] = [];
   const opened: { jid: string; username: string | null }[] = [];
   let closes = 0;
-  let dialogCloses = 0;
   const context = {
     account: "a", generation: 1, openedAccount: "a", openedGeneration: 1,
-    closed: false, request: 0, query: "", usernameKey: "", busy: false,
+    closed: false, request: 0, query: "", usernameKey: "", busy: false, open: true,
     result: null as UsernameLookupResult | null, error: null as LocalizedError | string | null, normalizeError,
-    dialog: { close: () => { dialogCloses++; } }, onclose: () => { closes++; },
+    onclose: () => { closes++; },
     onlookup: (username: string, key?: string) => {
       const result = deferred<UsernameLookupResult>();
       requests.push({ username, key, result });
@@ -52,7 +51,7 @@ function fixture() {
     lookup(): Promise<void>; changeQuery(value: string): void; changeKey(value: string): void;
     close(): void; scopeEffect(): void;
   };
-  return { actions, requests, opened, closes: () => closes, dialogCloses: () => dialogCloses };
+  return { actions, requests, opened, closes: () => closes };
 }
 
 test("manual username lookup opens only returned address and closes once", async () => {
@@ -75,7 +74,7 @@ test("manual username lookup opens only returned address and closes once", async
     assert.deepEqual(f.opened, [{ jid: found.jid, username: found.username }]);
     f.actions.close();
     assert.equal(f.closes(), 1);
-    assert.equal(f.dialogCloses(), 1);
+    assert.equal(f.actions.open, false);
     assert.equal(f.actions.query, "");
     assert.equal(f.actions.usernameKey, "");
     assert.equal(f.actions.busy, false);

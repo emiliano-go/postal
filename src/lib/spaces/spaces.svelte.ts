@@ -12,6 +12,7 @@ export class SpacesState {
   resolution = $state.raw<SpaceResolution | null>(null);
   loaded = $state(false);
   loading = $state(false);
+  resolving = $state(false);
   busy = $state(false);
   error = $state<LocalizedError | null>(null);
   keywordCounts: () => Record<string, number> = () => ({});
@@ -27,7 +28,7 @@ export class SpacesState {
     this.snapshot = { spaces: [], items: [] };
     this.selected = { kind: "all" };
     this.resolution = null;
-    this.loaded = this.loading = this.busy = false;
+    this.loaded = this.loading = this.resolving = this.busy = false;
     this.error = null;
   }
 
@@ -52,8 +53,9 @@ export class SpacesState {
     const scope = this.scope(), request = ++this.request;
     const keywordCounts = { ...this.keywordCounts() };
     const current = () => scope.current() && request === this.request;
-    this.loading = true;
-    this.resolution = null;
+    const background = this.loaded;
+    if (background) this.resolving = true;
+    else { this.loading = true; this.resolution = null; }
     this.error = null;
     try {
       const snapshot = await invoke<SpaceSnapshot>("spaces_snapshot", { accountId: account });
@@ -62,10 +64,11 @@ export class SpacesState {
       this.loaded = true;
       this.keepSelection();
       const selection = structuredClone(this.selected);
+      if (!background) this.resolution = null;
       const resolution = await invoke<SpaceResolution>("resolve_spaces", { accountId: account, selection, keywordCounts });
       if (current()) this.resolution = resolution;
     } catch (failure) { if (current()) this.error = normalizeError(failure); }
-    finally { if (current()) this.loading = false; }
+    finally { if (current()) this.loading = this.resolving = false; }
   }
 
   async select(selection: SpaceSelection) {
@@ -79,21 +82,22 @@ export class SpacesState {
     const request = ++this.request, selection = structuredClone(this.selected);
     const keywordCounts = { ...this.keywordCounts() };
     const current = () => scope.current() && request === this.request;
-    this.loading = true;
-    this.resolution = null;
+    const background = this.loaded;
+    if (background) this.resolving = true;
+    else { this.loading = true; this.resolution = null; }
     this.error = null;
     try {
       const resolution = await invoke<SpaceResolution>("resolve_spaces", { accountId: scope.account, selection, keywordCounts });
       if (current()) this.resolution = resolution;
     } catch (failure) { if (current()) this.error = normalizeError(failure); }
-    finally { if (current()) this.loading = false; }
+    finally { if (current()) this.loading = this.resolving = false; }
   }
 
   private async write(command: "spaces_action" | "import_space_metadata", args: Record<string, unknown>) {
     const scope = this.scope();
     if (!scope.current() || this.busy) throw normalizeError({ kind: "postal_error", code: "error.spaces_unavailable", params: {} });
     this.request++;
-    this.loading = false;
+    this.loading = this.resolving = false;
     this.busy = true;
     this.error = null;
     try {

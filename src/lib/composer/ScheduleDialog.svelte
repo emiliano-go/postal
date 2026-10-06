@@ -3,6 +3,7 @@
   import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
   import Button from "$lib/ui/Button.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import { ui } from "$lib/state/ui.svelte";
 
   let { text, dueAt = Math.floor(Date.now() / 1000) + 3600, editing = false, onsave, onclose }: {
@@ -21,9 +22,6 @@
   let time = $state(untrack(() => localTime(dueAt)));
   let saving = $state(false);
   let error = $state<LocalizedError | string | null>("");
-  let dialog: HTMLDialogElement;
-
-  $effect(() => { dialog?.showModal(); });
 
   async function save() {
     if (saving) return;
@@ -41,7 +39,9 @@
   }
 </script>
 
-<dialog bind:this={dialog} oncancel={(event) => { event.preventDefault(); if (!saving) onclose(); }} aria-label={editing ? t("content.edit_scheduled_message") : t("content.schedule_message")}>
+<Dialog size="sm" style="--dialog-width: min(420px, 85vw); padding: 22px;"
+  label={editing ? t("content.edit_scheduled_message") : t("content.schedule_message")}
+  open onclose={() => { if (!saving) onclose(); }}>
   <form onsubmit={(event) => { event.preventDefault(); void save(); }}>
     <h2>{editing ? t("content.edit_scheduled_message") : t("content.schedule_message")}</h2>
     <p>{t("content.postal_sends_when_this_account_is_connected_and_the_app_is_open_missed_t")}</p>
@@ -53,11 +53,9 @@
       <Button variant="primary" type="submit" disabled={saving || !body.trim()}>{saving ? t("content.saving") : editing ? t("content.save") : t("content.schedule")}</Button>
     </div>
   </form>
-</dialog>
+</Dialog>
 
 <style>
-  dialog { width: min(420px, 85vw); color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow); }
-  dialog::backdrop { background: var(--scrim); }
   form, label { display: flex; flex-direction: column; gap: 10px; }
   form { gap: 16px; }
   h2, p { margin: 0; }

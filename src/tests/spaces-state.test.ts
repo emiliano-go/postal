@@ -125,6 +125,37 @@ test("metadata export/import stays scoped and failed writes preserve existing co
   f.messages.accountGeneration++; exported.resolve("obsolete"); await rejected;
 });
 
+test("initial load signals loading while background re-resolves keep stale data under resolving", async () => {
+  const f = fixture();
+  const first = deferred<SpaceSnapshot>();
+  f.handle((command) => command === "spaces_snapshot" ? first.promise : resolution());
+  const loading = f.state.refresh();
+  assert.equal(f.state.loading, true);
+  assert.equal(f.state.resolving, false);
+  const initialResolution: SpaceResolution | null = f.state.resolution;
+  assert.equal(initialResolution, null);
+  first.resolve(snapshot()); await loading;
+  assert.equal(f.state.loaded, true);
+  assert.equal(f.state.loading, false);
+  assert.equal(f.state.resolving, false);
+  const stale = f.state.resolution;
+  assert.ok(stale);
+  const next = deferred<SpaceResolution>();
+  f.handle(() => next.promise);
+  const background = f.state.resolve();
+  assert.equal(f.state.loading, false);
+  assert.equal(f.state.resolving, true);
+  const duringResolve: SpaceResolution | null = f.state.resolution;
+  assert.ok(duringResolve === stale);
+  next.resolve(resolution("fresh@lid")); await background;
+  const finished: SpaceResolution | null = f.state.resolution;
+  assert.deepEqual(finished?.chats, ["fresh@lid"]);
+  assert.equal(f.state.resolving, false);
+  assert.equal(f.state.loading, false);
+  f.state.reset();
+  assert.equal(f.state.resolving, false);
+});
+
 test("adding targets uses local UUIDs, allows multiple Spaces and stops on partial failure", async () => {
   const f = fixture(); await f.state.refresh();
   const value = snapshot(); value.spaces.push({ ...value.spaces[0], id: "other", order: 1 });

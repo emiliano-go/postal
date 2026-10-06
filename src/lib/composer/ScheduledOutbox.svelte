@@ -6,6 +6,7 @@
   import { messageText } from "$lib/i18n/errors";
   import { session } from "$lib/state/session.svelte";
   import Button from "$lib/ui/Button.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import ScheduleDialog from "./ScheduleDialog.svelte";
 
   let { enqueue, displayName = (chat: string) => chat }: {
@@ -14,7 +15,6 @@
   } = $props();
   let editing = $state<ScheduledMessageView | null>(null);
   let changing = $state<string | null>(null);
-  let dialog: HTMLDialogElement;
 
   $effect(() => { scheduled.selectAccount(session.activeAccount); editing = null; });
   $effect(() => {
@@ -26,10 +26,6 @@
     const timer = setInterval(() => { void scheduled.tick(enqueue); }, 1000);
     return () => clearInterval(timer);
   });
-  $effect(() => {
-    if (scheduled.open && dialog && !dialog.open) dialog.showModal();
-    else if (!scheduled.open && dialog?.open) dialog.close();
-  });
 
   async function change(command: "cancel_scheduled_message" | "retry_scheduled_message", id: string) {
     changing = id;
@@ -38,7 +34,8 @@
   }
 </script>
 
-<dialog bind:this={dialog} oncancel={() => (scheduled.open = false)} aria-label={t("content.scheduled_messages")}>
+<Dialog size="md" style="--dialog-width: min(560px, 85vw); max-height: 80vh; padding: 22px;"
+  label={t("content.scheduled_messages")} open={scheduled.open} onclose={() => (scheduled.open = false)}>
   <div class="header"><h2>{t("content.scheduled_messages")}</h2><Button variant="icon" icon="x" title={t("content.close")} aria-label={t("content.close_scheduled_messages")} onclick={() => (scheduled.open = false)} /></div>
   <p>{t("content.messages_send_while_postal_is_open_and_this_account_is_connected_missed_")}</p>
   {#if scheduled.error}<p class="error" role="alert">{scheduled.error}</p>{/if}
@@ -60,7 +57,7 @@
       </li>
     {/each}
   </ul>
-</dialog>
+</Dialog>
 
 {#if editing}
   <ScheduleDialog text={editing.text} dueAt={editing.due_at} editing
@@ -70,8 +67,6 @@
 
 <style>
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  dialog { width: min(560px, 85vw); max-height: 80vh; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow); }
-  dialog::backdrop { background: var(--scrim); }
   h2 { margin: 0; font-size: 1.125rem; }
   p, span, .status { color: var(--muted); font-size: 0.8125rem; line-height: 1.5; }
   ul { list-style: none; padding: 0; margin: 0; }

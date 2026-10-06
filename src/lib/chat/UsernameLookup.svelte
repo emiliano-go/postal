@@ -2,6 +2,7 @@
   import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { t } from "$lib/i18n/localizer";
   import { onMount, untrack } from "svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import type { UsernameLookupResult } from "$lib/utils/wire";
 
   let { account, generation, onlookup, onfound, onclose }: {
@@ -12,7 +13,8 @@
     onclose: () => void;
   } = $props();
 
-  let dialog: HTMLDialogElement;
+  let dialog: HTMLDialogElement | undefined = $state();
+  let open = $state(true);
   let input: HTMLInputElement;
   const openedAccount = untrack(() => account);
   const openedGeneration = untrack(() => generation);
@@ -73,18 +75,17 @@
     if (closed) return;
     closed = true;
     changeQuery("");
-    dialog?.close();
+    open = false;
     onclose();
   }
 
   onMount(() => {
     const previous = document.activeElement;
-    dialog.showModal();
     input.focus();
     return () => {
       closed = true;
       request++;
-      dialog.close();
+      dialog?.close();
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   });
@@ -92,8 +93,8 @@
   $effect(() => { if (account !== openedAccount || generation !== openedGeneration) close(); });
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="username-lookup-title"
-  oncancel={(event) => { event.preventDefault(); close(); }}>
+<Dialog size="sm" style="padding: 20px 22px;" labelledby="username-lookup-title"
+  bind:dialog bind:open onclose={close}>
   <header>
     <h2 id="username-lookup-title">{t("contact.username_find")}</h2>
     <button type="button" class="close" aria-label={t("contact.username_close")} onclick={close}>×</button>
@@ -114,11 +115,9 @@
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <footer><button type="submit" disabled={busy || !query.trim()}>{busy ? t("contact.username_finding") : t("contact.username_find")}</button></footer>
   </form>
-</dialog>
+</Dialog>
 
 <style>
-  dialog { width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; box-sizing: border-box; padding: 20px 22px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
-  dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
   h2 { margin: 0; font-size: 1.0625rem; }
   .close { border: 0; background: transparent; color: var(--text); font: inherit; font-size: 1.5rem; cursor: pointer; }

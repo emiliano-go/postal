@@ -3,6 +3,7 @@
   import { t } from "$lib/i18n/localizer";
   import { onMount, untrack } from "svelte";
   import Button from "$lib/ui/Button.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import type { SpaceInboxFilters, SpaceItem, SpaceTarget } from "$lib/utils/wire";
   import { emptyInboxFilters, matchingCandidates, SPACE_KINDS, targetKey, targetTitle, type SpaceCandidate } from "./spaces";
 
@@ -11,7 +12,7 @@
     loading?: boolean; error?: LocalizedError | string | null;
     onadd: (targets: SpaceTarget[]) => Promise<void>; onclose: () => void;
   } = $props();
-  let dialog: HTMLDialogElement;
+  let dialog: HTMLDialogElement | undefined = $state();
   const openedAccount = untrack(() => account), openedGeneration = untrack(() => generation), openedSpace = untrack(() => spaceId);
   let closed = false, request = 0;
   let kind = $state<SpaceTarget["kind"]>("chat"), query = $state("");
@@ -33,10 +34,10 @@
 
   onMount(() => {
     const previous = document.activeElement;
-    dialog.showModal();
-    dialog.querySelector<HTMLInputElement>("input[type=search]")?.focus();
+    dialog?.querySelector<HTMLInputElement>("input[type=search]")?.focus();
     return () => {
-      closed = true; request++; dialog.close();
+      closed = true; request++;
+      dialog?.close();
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   });
@@ -51,7 +52,6 @@
     filters = emptyInboxFilters();
     working = false;
     failure = "";
-    dialog?.close();
     onclose();
   }
 
@@ -89,7 +89,7 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-label={t("spaces.picker_title")} oncancel={(event) => { event.preventDefault(); close(); }}>
+<Dialog size="md" label={t("spaces.picker_title")} open onclose={close} bind:dialog>
   <header><h2>{t("spaces.picker_title")}</h2><Button variant="icon" icon="x" aria-label={t("spaces.picker_close")} onclick={close} /></header>
   <p class="muted">{t("spaces.picker_hint")}</p>
   <label>{t("spaces.item_type")} <select bind:value={kind} disabled={disabled}>
@@ -100,8 +100,7 @@
     {#each shown as row (targetKey(row.target))}
       {@const key = targetKey(row.target)}
       <li><label><input type="checkbox" checked={picked.has(key) || assigned.has(key)} disabled={disabled || assigned.has(key)}
-        onchange={() => toggle(row.target)} /><span>{row.title}{#if row.detail}<small>{row.detail}</small>{/if}</span></label>
-        {#if assigned.has(key)}<small class="muted">{t("spaces.already_added")}</small>{/if}</li>
+        onchange={() => toggle(row.target)} /><span>{row.title}{#if assigned.has(key)}<small class="muted already">{t("spaces.already_added")}</small>{/if}{#if row.detail}<small>{row.detail}</small>{/if}</span></label></li>
     {/each}
   </ul>
   {#if loading}<p class="muted" role="status">{t("spaces.items_loading")}</p>
@@ -135,11 +134,9 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if failure}<p class="error" role="alert">{failure}</p>{/if}
   <footer><Button variant="primary" disabled={disabled || !selected.length} onclick={save}>{working ? t("ui.adding") : t("spaces.add_count", { count: selected.length })}</Button></footer>
-</dialog>
+</Dialog>
 
 <style>
-  dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; box-sizing: border-box; padding: 20px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
-  dialog::backdrop { background: var(--scrim); }
   header, footer, .selected li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   h2 { margin: 0; font-size: 1.0625rem; }
   h3 { font-size: 0.875rem; }
@@ -147,9 +144,16 @@
   input:not([type="checkbox"]), select { box-sizing: border-box; width: 100%; padding: 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   ul { margin: 0; padding: 0; list-style: none; }
   .catalog { max-height: 220px; overflow-y: auto; }
-  .catalog label, .check { display: flex; align-items: flex-start; gap: 8px; }
+  .catalog label, .check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+  .catalog input[type="checkbox"], .check input[type="checkbox"] { appearance: none; -webkit-appearance: none; flex: none; width: 18px; height: 18px; margin: 0; display: grid; place-items: center; border: 1.5px solid var(--line-strong); border-radius: 6px; background: var(--bg); cursor: pointer; transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease); }
+  .catalog input[type="checkbox"]:hover:not(:disabled), .check input[type="checkbox"]:hover:not(:disabled) { border-color: var(--accent); }
+  .catalog input[type="checkbox"]:focus-visible, .check input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .catalog input[type="checkbox"]:checked, .check input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+  .catalog input[type="checkbox"]:checked::after, .check input[type="checkbox"]:checked::after { content: ""; width: 9px; height: 5px; border-inline-start: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: rotate(-45deg) translateY(-1px); }
+  .catalog input[type="checkbox"]:disabled, .check input[type="checkbox"]:disabled { opacity: 0.55; cursor: default; }
   .catalog span, .selected span { overflow-wrap: anywhere; }
   small { display: block; margin-top: 3px; font-size: 0.75rem; color: var(--muted); }
+  small.already { display: inline; margin-top: 0; margin-inline-start: 6px; }
   .muted { color: var(--muted); font-size: 0.75rem; }
   fieldset { margin: 12px 0; border: 1px solid var(--line-strong); border-radius: 6px; }
   button { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }

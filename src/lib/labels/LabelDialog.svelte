@@ -3,6 +3,7 @@
   import { t } from "$lib/i18n/localizer";
   import type { Label } from "$lib/utils/wire";
   import Icon from "$lib/ui/Icon.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
 
   let { account, requestKey, labels, selected = [], mixed = [], mode, busy = false, error = "",
     complete = false, defaultColor = 0, onapply, onsave, ondelete, onclose }: {
@@ -22,7 +23,6 @@
     onclose: () => void;
   } = $props();
 
-  let dialog = $state<HTMLDialogElement>();
   let draft = $state<{ id: string; name: string; color: number | undefined }>({ id: "", name: "", color: 0 });
   let confirmation = $state<Label | null>(null);
   let working = $state(false);
@@ -40,7 +40,6 @@
     failure = "";
     return () => { ++generation; };
   });
-  $effect(() => { if (dialog && !dialog.open) dialog.showModal(); });
 
   function markMixed(node: HTMLInputElement, value: boolean) {
     node.indeterminate = value;
@@ -73,9 +72,9 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-label={mode === "manage" ? t("labels.manage") : t("labels.apply")}
-  onclick={(event) => { if (event.target === dialog) onclose(); }}
-  oncancel={(event) => { event.preventDefault(); event.stopPropagation(); onclose(); }}
+<Dialog size="md" style="--dialog-width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px);"
+  label={mode === "manage" ? t("labels.manage") : t("labels.apply")}
+  open lightDismiss {onclose}
   onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
   <header><h2>{mode === "manage" ? t("labels.manage") : t("labels.apply")}</h2>
     <button class="close" aria-label={t("labels.close")} onclick={onclose}><Icon name="x" size={18} /></button></header>
@@ -120,11 +119,9 @@
   {/if}
   {#if working || busy}<p class="muted" role="status">{t("labels.updating")}</p>{/if}
   {#if error || failure}<p class="error" role="alert">{failure || error}</p>{/if}
-</dialog>
+</Dialog>
 
 <style>
-  dialog { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); box-sizing: border-box; padding: 20px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); overflow: auto; }
-  dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   h2 { margin: 0; font-size: 1.125rem; } h3 { margin: 0; font-size: 0.875rem; }
   ul { padding: 0; margin: 16px 0; list-style: none; }

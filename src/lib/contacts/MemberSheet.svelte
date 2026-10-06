@@ -9,6 +9,7 @@
   import { displayName, phoneLabel } from "$lib/utils/phone";
   import { changeText } from "$lib/utils/group-actions";
   import Avatar from "$lib/ui/Avatar.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import Lightbox from "$lib/media/Lightbox.svelte";
   import GroupAudit from "$lib/chat/GroupAudit.svelte";
@@ -36,7 +37,6 @@
 
   const actions = [["promote", "group.make_admin"], ["demote", "group.remove_admin"], ["remove", "group.remove_member"],
     ["block", "contact.block"], ["unblock", "contact.unblock"], ["report", "contact.report"]] as const;
-  let dialog = $state<HTMLDialogElement>();
   let notes = $state("");
   let warnings = $state<number | undefined>(0);
   let notesLoaded = $state(false);
@@ -74,7 +74,6 @@
     return () => { ++generation; };
   });
   $effect(() => { if (local && !notesLoaded) { notes = local.note.text; warnings = local.note.warnings; notesLoaded = true; } });
-  $effect(() => { if (dialog && !dialog.open) dialog.showModal(); });
   $effect(() => { const timer = setInterval(() => { now = Date.now(); }, 1000); return () => clearInterval(timer); });
 
   function scope(): MemberScope | null { return account && group && jid ? { account, group, jid, requestKey } : null; }
@@ -119,7 +118,8 @@
   if (enlarged && event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); enlarged = false; }
 }} />
 
-<dialog bind:this={dialog} aria-label={t("contact.member_info", { name: shown })} oncancel={(event) => { event.preventDefault(); event.stopPropagation(); onclose(); }}
+<Dialog size="lg" style="padding: 24px; max-height: calc(100vh - 32px);" label={t("contact.member_info", { name: shown })}
+  open {onclose}
   onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
   <header><div><h2><bdi>{shown}</bdi></h2><span class="muted">{groupName}</span></div><button class="close" aria-label={t("contact.member_close")} onclick={onclose}><Icon name="x" size={18} /></button></header>
   <div class="identity-head"><button class="photo" disabled={!picture} aria-label={t("contact.member_photo")} onclick={() => (enlarged = true)}>
@@ -196,11 +196,9 @@
     onload={loadAudit}
     onjump={(group, messageId) => ongroup(group, messageId)} />{:else}<h3>{t("contact.member_audit")}</h3><p class="muted">{t("group.audit_unavailable")}</p>{/if}</section>
   {#if enlarged && picture}<Lightbox {jid} preview={picture} alt={shown} onclose={() => (enlarged = false)} />{/if}
-</dialog>
+</Dialog>
 
 <style>
-  dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); box-sizing: border-box; overflow: auto; padding: 24px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
-  dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   h2 { margin: 0 0 5px; font-size: 1.25rem; overflow-wrap: anywhere; } h3 { margin: 0 0 12px; font-size: 0.9375rem; }
   .close { border: 0; background: transparent; padding: 5px; display: grid; place-items: center; }
@@ -219,6 +217,6 @@
   ul { padding-inline-start: 20px; } li { margin-bottom: 6px; }
   small { display: block; color: var(--muted); font-size: 0.6875rem; margin-top: 5px; }
   .business { margin-top: 14px; }
-  @media (max-width: 480px) { dialog { padding: 16px; } dl { grid-template-columns: 1fr; gap: 4px; } dd { margin-bottom: 8px; } }
+  @media (max-width: 480px) { dl { grid-template-columns: 1fr; gap: 4px; } dd { margin-bottom: 8px; } }
   details pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

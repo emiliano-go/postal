@@ -82,8 +82,7 @@
     onchataction,
     onmarkread,
     onmarkallread,
-    onnewgroup,
-    onnewcontact = () => {},
+    onnewchat,
     oninbox = () => {},
     onchannels = () => {},
     onlabels = () => {},
@@ -161,8 +160,7 @@
     chatPreviewDelayMs?: number;
     globalAutoDownload: MediaAutoDownload;
     onmarkallread: () => void;
-    onnewgroup: () => void;
-    onnewcontact?: () => void;
+    onnewchat: () => void;
     oninbox?: () => void;
     onlabels?: () => void;
     onchatlabels?: (chat: string) => void;
@@ -531,10 +529,8 @@
     <Button variant="icon" icon="star" iconSize={18} title={t("chat.starred")} aria-label={t("chat.starred")} onclick={onstarred} />
     <Button variant="icon" icon="check" iconSize={18} title={t("chat.mark_all_read")} aria-label={t("chat.mark_all_read")}
       disabled={markingAllRead} onclick={onmarkallread} />
-    <Button variant="icon" icon="users" iconSize={18} title={t("group.new")} aria-label={t("group.new")}
-      disabled={!canCreateGroup} onclick={onnewgroup} />
-    <Button variant="icon" icon="user" iconSize={18} title={t("contact.new")} aria-label={t("contact.new")}
-      disabled={!canCreateGroup} onclick={onnewcontact} />
+    <Button variant="icon" icon="plus" iconSize={18} title={t("chat.new_chat")} aria-label={t("chat.new_chat")}
+      disabled={!canCreateGroup} onclick={onnewchat} />
   </header>
   {@render spacesContent?.()}
   <label class="search">
@@ -872,10 +868,6 @@
     style="left: {Math.min(chatMenu.x, window.innerWidth - 220)}px; top: {Math.min(chatMenu.y, window.innerHeight - 160)}px">
     {#if menuError}<p role="alert">{t("chat.settings_load_failed", { error: normalizeError(menuError).message })}</p>{/if}
     {#if floatError}<p role="alert">{t("chat.float_failed", { error: normalizeError(floatError).message })}</p>{/if}
-    <Button variant="menu" icon="message" iconSize={15} role="menuitem"
-      disabled={!activeAccount || floatBusy} onclick={() => floatChat(menuChat.chat)}>
-      {floatBusy ? t("ui.opening") : t("chat.float")}
-    </Button>
     <div class="quick-row" role="group" aria-label={t("chat.quick_actions")}>
       <Button
         variant="icon"
@@ -933,6 +925,10 @@
           closeChatMenu();
         }} />
     </div>
+    <Button variant="menu" icon="message" iconSize={15} role="menuitem"
+      disabled={!activeAccount || floatBusy} onclick={() => floatChat(menuChat.chat)}>
+      {floatBusy ? t("ui.opening") : t("chat.float")}
+    </Button>
     <Button
       variant="menu"
       icon="archive"
@@ -1622,14 +1618,18 @@
   }
   .quick-row {
     display: flex;
-    gap: 2px;
+    gap: 4px;
     padding: 2px 2px 6px;
     margin-bottom: 4px;
     border-bottom: 1px solid var(--line-strong);
   }
   .quick-row :global(.btn-icon) {
-    flex: 1;
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    height: 36px;
     min-height: 36px;
+    aspect-ratio: auto;
   }
   .quick-row :global(.btn-icon:disabled) {
     opacity: 0.5;

@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 
 test("group picker allows server-supported sizes above the old 256-person cap", () => {
-  const source = readFileSync(new URL("../lib/chat/NewGroup.svelte", import.meta.url), "utf8").match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
+  const source = readFileSync(new URL("../lib/chat/GroupCreator.svelte", import.meta.url), "utf8").match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
   const tree = ts.createSourceFile("group.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const toggle = tree.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "toggle");
   const valid = tree.statements.filter(ts.isVariableStatement).flatMap((node) => node.declarationList.declarations)

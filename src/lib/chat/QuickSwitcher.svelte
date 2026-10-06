@@ -2,6 +2,7 @@
   import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { t } from "$lib/i18n/localizer";
   import { onMount, untrack } from "svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import { members } from "$lib/state/members.svelte";
   import { plain } from "$lib/utils/format";
   import { QUICK_RECENT_LIMIT, quickChats, quickSwitcherKey, messageSnippet, type QuickChat, type QuickSwitchTarget } from "$lib/utils/quick-switcher";
@@ -18,7 +19,6 @@
     initialQuery?: string;
   } = $props();
 
-  let dialog: HTMLDialogElement;
   let input: HTMLInputElement;
   let list: HTMLUListElement;
   const openedAccount = untrack(() => account);
@@ -55,9 +55,8 @@
   ] : []);
 
   onMount(() => {
-    dialog.showModal();
     input.focus();
-    return () => { mounted = false; dialog.close(); };
+    return () => { mounted = false; };
   });
 
   $effect(() => { if (account !== openedAccount) close(); });
@@ -102,7 +101,6 @@
   }
 
   function close() {
-    dialog.close();
     onclose();
   }
 
@@ -119,8 +117,8 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="quick-switcher-title" onkeydown={key}
-  oncancel={(event) => { event.preventDefault(); close(); }}>
+<Dialog size="md" style="--dialog-width: min(580px, calc(100vw - 32px)); padding: 16px; background: var(--bg);"
+  labelledby="quick-switcher-title" open onclose={close} onkeydown={key}>
   <header>
     <h2 id="quick-switcher-title">{t("nav.quick_switcher")}</h2>
     <button type="button" class="close" aria-label={t("nav.quick_close")} onclick={close}>×</button>
@@ -149,11 +147,9 @@
   <footer><span>{t("nav.quick_move_keys")}</span><span>{t("nav.quick_open_key")}</span><span>{t("nav.quick_close_key")}</span>
     {#if onusername}<button type="button" class="username" disabled={busy} onclick={onusername}>{t("contact.username_find")}</button>{/if}
   </footer>
-</dialog>
+</Dialog>
 
 <style>
-  dialog { width: min(580px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
-  dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   h2 { margin: 0; font-size: 1rem; font-weight: 600; }
   .close { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font: inherit; font-size: 1.25rem; cursor: pointer; }

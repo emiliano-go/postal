@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import NewGroup from "$lib/chat/NewGroup.svelte";
+  import NewChatDialog from "$lib/chat/NewChatDialog.svelte";
   import { session } from "$lib/state/session.svelte";
   import type { GroupCreateResult, SearchResult } from "$lib/utils/wire";
 
@@ -43,6 +43,9 @@
   }
   async function show() {
     opened = true;
+    await tick();
+    await wait();
+    button("New group").click();
     await tick();
     await wait();
     assert(document.querySelectorAll("dialog .contacts input").length === 3, "synthetic contacts must load");
@@ -110,9 +113,9 @@
 <output aria-label="Operations">{JSON.stringify(operations)}</output>
 
 {#if opened}
-  <NewGroup account="synthetic-group-account-a" me="999@s.whatsapp.net" avatars={{}} onavatar={() => {}}
+  <NewChatDialog account="synthetic-group-account-a" me="999@s.whatsapp.net" avatars={{}} connected onavatar={() => {}}
     onsearch={async (query) => contacts.filter((person) => person.name.toLowerCase().includes(query.toLowerCase()))}
-    oncreate={create} onopen={open} onclose={() => { opened = false; }} />
+    oncreate={create} onopen={open} onsaved={() => {}} onclose={() => { opened = false; }} />
 {/if}
 
 <style>

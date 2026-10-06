@@ -42,7 +42,7 @@
           onpings={noop} onstarred={noop} onsearch={noop} onopenresult={noop} onopenchat={noop}
           ontogglepin={noop} onclearchat={noop} ondeletechat={noop} onchataction={noop}
           onmarkread={noop} onmarkallread={noop} archivedChats={0} onresize={noop}
-          onnewgroup={noop} onblockcontact={async () => {}}
+          onnewchat={noop} onblockcontact={async () => {}}
           globalAutoDownload={{ image: false, video: false, audio: false, document: false, sticker: false, gif: false }}
         />
         <section class="conversation">

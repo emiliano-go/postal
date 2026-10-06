@@ -38,7 +38,6 @@ export class UiState {
   settingsSection = $state<Section>("accounts");
   accountMenu = $state(false);
   chatSettingsOpen = $state(false);
-  newGroup = $state(false);
   showInbox = $state(false);
   labelTargets = $state<{ chat: string; id?: string }[] | null>(null);
   manageLabels = $state(false);
@@ -113,7 +112,6 @@ export class UiState {
     this.creating = null;
     this.editingEvent = null;
     this.accountMenu = false;
-    this.newGroup = false;
     this.showInbox = false;
     this.labelTargets = null;
     this.manageLabels = false;

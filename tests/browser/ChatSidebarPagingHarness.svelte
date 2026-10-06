@@ -28,7 +28,7 @@
     onmenutoggle: noop, onswitchaccount: noop, onaddaccount: noop, onsettings: noop,
     onpings: noop, onstarred: noop, onsearch: noop, onopenresult: noop, onopenchat: noop,
     ontogglepin: noop, onclearchat: noop, ondeletechat: noop, onchataction: noop,
-    onmarkread: noop, onmarkallread: noop, onnewgroup: noop, onblockcontact: async () => {},
+    onmarkread: noop, onmarkallread: noop, onnewchat: noop, onblockcontact: async () => {},
     archivedChats: 0, onresize: noop, freezeOnHover: false, chatPreview: false,
     globalAutoDownload: { image: false, video: false, audio: false, document: false, sticker: false, gif: false },
   });

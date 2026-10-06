@@ -19,7 +19,7 @@
   import MessageFinder from "$lib/messages/MessageFinder.svelte";
   import ChatSettings from "$lib/chat/ChatSettings.svelte";
   import { bulkReadError } from "$lib/utils/bulk-chats";
-  import NewGroup from "$lib/chat/NewGroup.svelte";
+  import NewChatDialog from "$lib/chat/NewChatDialog.svelte";
   import type { ChatRetention, ChatSummary } from "$lib/utils/models";
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import MemberSheet from "$lib/contacts/MemberSheet.svelte";
@@ -38,7 +38,6 @@
     type SkinTone,
   } from "$lib/utils/emoji";
   import type { BroadcastList } from "$lib/utils/wire";
-  import NewContact from "$lib/contacts/NewContact.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
   import type { SharedContact, ContactShareScope } from "$lib/utils/vcard";
   import QuickSwitcher from "$lib/chat/QuickSwitcher.svelte";
@@ -65,6 +64,7 @@
   import Button from "$lib/ui/Button.svelte";
   import Spinner from "$lib/ui/Spinner.svelte";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import PairingView from "$lib/settings/PairingView.svelte";
   import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
@@ -153,14 +153,8 @@
     if (current() && chats.selectedChat === chat && messages.atLatest && !messages.loadingOlder) await messages.reloadMessages(chat);
   }
   let helpSeen = $state(helpDismissed());
-  let helpDialog = $state<HTMLDialogElement>();
   $effect(() => {
     if (session.connected && session.activeAccount && !helpSeen && !a11yPromptOpen && !ui.showSettings) helpOpen = true;
-  });
-  $effect(() => {
-    if (!helpDialog) return;
-    if (helpOpen && !helpDialog.open) helpDialog.showModal();
-    else if (!helpOpen && helpDialog.open) helpDialog.close();
   });
 
   function closeHelp() {
@@ -325,8 +319,6 @@
   });
 
   let composerInput: HTMLTextAreaElement | undefined = $state();
-  let contactDialog = $state<HTMLDialogElement>();
-  $effect(() => { if (ui.sharingContacts && contactDialog && !contactDialog.open) contactDialog.showModal(); });
   let chatOpenSeq = 0;
   let galleryChat = $state<string | null>(null);
   let galleryRows = $state.raw<ChatSummary[]>([]);
@@ -667,7 +659,7 @@
       broadcastFor = { account: session.activeAccount, chat, generation: messages.accountGeneration };
     } else contactInfoFor = chat;
   }
-  let newContact = $state(false);
+  let newChat = $state(false);
   let quickSwitcher = $state(false);
   let switcherQuery = $state("");
   let spaceFinderKey = $state(0);
@@ -710,9 +702,17 @@
     });
   });
   spaces.keywordCounts = () => keywords.account === session.activeAccount ? { ...keywords.counts } : {};
+  let spacesResolveTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     void chats.chats; void messages.marks; void labels.view; void chats.groupKinds; void keywords.counts; void keywords.revision;
-    untrack(() => { if (spaces.loaded && spaces.account === session.activeAccount) void spaces.resolve(); });
+    untrack(() => {
+      if (!spaces.loaded || spaces.account !== session.activeAccount) return;
+      // Burst updates (incoming messages, label syncs) must coalesce into one
+      // background re-resolve instead of flashing the list once per change.
+      clearTimeout(spacesResolveTimer);
+      spacesResolveTimer = setTimeout(() => { void spaces.resolve(); }, 200);
+    });
+    return () => clearTimeout(spacesResolveTimer);
   });
   $effect(() => { void chats.groupKinds; untrack(() => { if (spaces.loaded) void refreshSpaceCatalog(); }); });
   $effect(() => {
@@ -767,7 +767,7 @@
     else { inboxSeed = { ...target.filters }; inboxSeedKey++; ui.showInbox = true; void labels.refresh(); }
   }
   let usernameFor = $state<{ account: string; generation: number } | null>(null);
-  $effect(() => { session.activeAccount; newContact = quickSwitcher = false; });
+  $effect(() => { session.activeAccount; newChat = quickSwitcher = false; });
   $effect(() => {
     const account = session.activeAccount;
     messages.accountGeneration;
@@ -1545,10 +1545,8 @@
 {#if a11yPromptOpen}
   <AccessibilityPrompt ondone={() => void afterA11yPrompt()} />
 {/if}
-<dialog class="shortcut-help" bind:this={helpDialog} aria-labelledby="shortcut-help-title"
-  oncancel={(event) => { event.preventDefault(); closeHelp(); }}
-  onkeydown={(event) => event.stopPropagation()}
-  onclick={(event) => { if (event.target === event.currentTarget) closeHelp(); }}>
+<Dialog size="lg" style="max-height: 86vh; padding: 0;" labelledby="shortcut-help-title"
+  open={helpOpen} lightDismiss onclose={closeHelp} onkeydown={(event) => event.stopPropagation()}>
   <div class="help-content">
     <header>
       <h2 id="shortcut-help-title">{t("help.title")}</h2>
@@ -1570,7 +1568,7 @@
     </ul>
     <p>{t(accessibility.charShortcutsEnabled ? "help.reopen" : "help.reopen_button")}</p>
   </div>
-</dialog>
+</Dialog>
 <ScheduledOutbox
   enqueue={<T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(task)}
   displayName={(chat) => members.displayName(chats.chats.find((item) => item.chat === chat)?.display_name ?? null, chat)} />
@@ -1711,8 +1709,7 @@
       onchataction={(command, args) => chats.chatAction(command, args)}
       globalAutoDownload={session.settings.auto_download_types}
       onmarkallread={markAllRead}
-      onnewgroup={() => (ui.newGroup = true)}
-      onnewcontact={() => (newContact = true)}
+      onnewchat={() => (newChat = true)}
       oninbox={() => { showChannels = false; ui.showInbox = !ui.showInbox; void labels.refresh(); }}
       onchannels={() => { showChannels = true; ui.showInbox = false; }}
       onlabels={() => { ui.manageLabels = true; void labels.refresh(); }}
@@ -1737,7 +1734,7 @@
       onresizekey={nudgeListWidth} onhelp={() => (helpOpen = true)}>
       {#snippet spacesContent()}
         <SpacesTree account={session.activeAccount} generation={messages.accountGeneration} snapshot={spaces.snapshot} selected={spaces.selected}
-          loading={spaces.loading} busy={spaces.busy} error={spaces.error} onselect={(selection: SpaceSelection) => void spaces.select(selection)}
+          loading={spaces.loading} resolving={spaces.resolving} busy={spaces.busy} error={spaces.error} onselect={(selection: SpaceSelection) => void spaces.select(selection)}
           onaction={(action) => spaces.mutate(action)} />
         {#if selectedSpace}<SpaceItems account={session.activeAccount} generation={messages.accountGeneration} space={selectedSpace}
           items={spaces.snapshot.items} resolution={spaces.resolution} catalog={spaceCandidates} loading={spaces.loading} busy={spaces.busy} error={spaces.error}
@@ -2626,11 +2623,12 @@
   </div>
 {/if}
 
-{#if ui.newGroup && session.activeAccount}
+{#if newChat && session.activeAccount}
   {@const account = session.activeAccount}
   {@const generation = messages.accountGeneration}
   {#key account}
-    <NewGroup {account} me={session.me} avatars={chats.avatars} onavatar={(jid) => chats.loadAvatar(jid)}
+    <NewChatDialog {account} me={session.me} avatars={chats.avatars} connected={session.connected}
+      onavatar={(jid) => chats.loadAvatar(jid)}
       onsearch={async (query) => {
         if (account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
         const rows = await invoke<import("$lib/utils/wire").SearchResult[]>("group_creation_contacts", { account, query });
@@ -2647,20 +2645,15 @@
         await chats.refreshChats();
         if (account !== session.activeAccount || generation !== messages.accountGeneration || opening !== chatOpenSeq) return;
         await openChat(result.jid, false, result.subject);
-        if (account === session.activeAccount && generation === messages.accountGeneration) ui.newGroup = false;
+        if (account === session.activeAccount && generation === messages.accountGeneration) newChat = false;
       }}
-      onclose={() => (ui.newGroup = false)} />
-  {/key}
-{/if}
-
-{#if newContact && session.activeAccount}
-  {#key session.activeAccount}
-    <NewContact account={session.activeAccount} connected={session.connected} onclose={() => (newContact = false)} onsaved={(jid) => {
+      onsaved={(jid) => {
         members.forgetUnresolvedNames();
         void chats.refreshChats();
-        newContact = false;
+        newChat = false;
         contactInfoFor = jid;
-      }} />
+      }}
+      onclose={() => (newChat = false)} />
   {/key}
 {/if}
 
@@ -2733,13 +2726,13 @@
 {/if}
 
 {#if ui.sharingContacts && chats.selectedChat}
-  <dialog bind:this={contactDialog} aria-label={t("page.share_contacts")} oncancel={(event) => { event.preventDefault(); event.stopPropagation(); ui.sharingContacts = false; }}
+  <Dialog size="md" label={t("page.share_contacts")} open onclose={() => { ui.sharingContacts = false; }}
     onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
     <button class="button" aria-label={t("page.close_share_contacts")} onclick={() => { ui.sharingContacts = false; }}>{t("ui.close")}</button>
     <ContactSharing mode="share" account={session.activeAccount} connected={session.connected} chat={chats.selectedChat}
       generation={messages.accountGeneration} canSend={!composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send)}
       choices={Object.entries(members.identities).map(([jid, identity]) => ({ jid, identity }))} onopenchat={openChat} onshare={sendContacts} />
-  </dialog>
+  </Dialog>
 {/if}
 
 {#if ui.manageLabels || ui.labelTargets}
@@ -2824,8 +2817,6 @@
 {/if}
 
 <style>
-  .shortcut-help { width: min(760px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
-  .shortcut-help::backdrop { background: var(--scrim); }
   .help-content { padding: 24px; }
   .help-content header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   .help-content h2 { margin: 0; font-size: 1.125rem; }

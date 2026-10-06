@@ -3,6 +3,7 @@
   import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { onMount, untrack } from "svelte";
   import Button from "$lib/ui/Button.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import { cameraFailure, cameraPhoto, openCamera, stopCamera, type CameraScope } from "$lib/utils/camera";
 
   let { account, chat, generation, onstage, onclose }: {
@@ -11,7 +12,9 @@
     onclose: () => void;
   } = $props();
   const owner = untrack(() => ({ account, chat, generation }));
-  let dialog: HTMLDialogElement, video: HTMLVideoElement;
+  let dialog: HTMLDialogElement | undefined = $state();
+  let open = $state(true);
+  let video: HTMLVideoElement;
   let stream: MediaStream | null = null;
   let live = true, request = 0;
   let ready = $state(false), loading = $state(true), capturing = $state(false), failed = $state<LocalizedError | string | null>("");
@@ -23,7 +26,7 @@
   }
   function close() {
     if (!live) return;
-    live = false; request++; release(); dialog?.close(); onclose();
+    live = false; request++; release(); open = false; onclose();
   }
   async function start() {
     const attempt = ++request;
@@ -55,17 +58,19 @@
   $effect(() => { if (!current()) close(); });
   onMount(() => {
     const opener = document.activeElement;
-    dialog.showModal(); void start();
+    const frame = dialog;
+    void start();
     return () => {
-      const restore = dialog.contains(document.activeElement) || document.activeElement === document.body;
-      live = false; request++; release(); dialog.close();
+      const restore = (frame?.contains(document.activeElement) ?? false) || document.activeElement === document.body;
+      live = false; request++; release();
       if (restore && opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
   });
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="camera-heading" aria-describedby="camera-description"
-  oncancel={(event) => { event.preventDefault(); close(); }} onclose={close}>
+<Dialog size="md" style="padding: 18px; border-color: var(--line); box-shadow: 0 8px 28px var(--shadow);"
+  labelledby="camera-heading" describedby="camera-description"
+  bind:dialog bind:open onclose={close}>
   <header><h2 id="camera-heading">{t("content.take_a_photo")}</h2><Button variant="icon" icon="x" aria-label={t("content.close_camera")} onclick={close} /></header>
   <p id="camera-description">{t("content.the_photo_is_added_to_your_attachments_review_it_before_sending")}</p>
   <!-- svelte-ignore a11y_media_has_caption -->
@@ -79,12 +84,10 @@
     {#if failed && !loading}<Button variant="ghost" disabled={capturing} onclick={() => void start()}>{t("content.try_again")}</Button>{/if}
     <Button variant="primary" disabled={!ready || loading || capturing} onclick={() => void capture()}>{capturing ? t("content.capturing") : t("content.take_photo")}</Button>
   </footer>
-</dialog>
+</Dialog>
 
 <style>
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  dialog { width: min(560px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); color: var(--text); background: var(--surface); box-shadow: 0 8px 28px var(--shadow); }
-  dialog::backdrop { background: var(--scrim); }
   header, footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   h2 { margin: 0; font-size: 1.125rem; }
   p { margin: 10px 0; color: var(--muted); font-size: 0.8125rem; }
