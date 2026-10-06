@@ -67,12 +67,18 @@
     font: inherit;
     cursor: pointer;
   }
-  /* Square muted icon button. */
+  /* Square muted icon button. Fixed box (not just min-*) so the hitbox
+     stays square no matter the content or flex parent. */
   .btn-icon {
     display: inline-grid;
     place-items: center;
+    flex: none;
+    width: 32px;
+    height: 32px;
     min-width: 32px;
     min-height: 32px;
+    aspect-ratio: 1 / 1;
+    box-sizing: border-box;
     padding: 0;
     background: transparent;
     border: 0;

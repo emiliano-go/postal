@@ -245,7 +245,6 @@ const MATERIAL_CSS = `
 .bubble:not(.mine):not(.first) { border-top-left-radius: 6px !important; }
 .bubble.mine { border-bottom-right-radius: 6px !important; }
 .bubble.mine:not(.first) { border-top-right-radius: 6px !important; }
-.chats ul { padding: 0 8px !important; }
 .chat-row { border-radius: 16px !important; }
 .chat-row::after { display: none !important; }
 .chip { border-radius: 8px !important; box-shadow: inset 0 0 0 1px var(--line-strong); }

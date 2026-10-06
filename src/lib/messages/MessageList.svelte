@@ -533,12 +533,16 @@
     const row = (event.target as HTMLElement | null)?.closest?.<HTMLElement>(".msg-row");
     const id = row?.querySelector<HTMLElement>(".bubble[data-id]")?.dataset.id;
     if (!id) return;
+    // Mouse click must not light the keyboard focus ring (that is for
+    // Tab/arrow navigation via focusMessage); it dismisses any live ring.
+    // Keyboard nav after a click still works: onRailKeydown falls back to
+    // the row under the event target when focusedMessageId is null.
     ++focusRevision;
     focusObserver?.disconnect();
     focusObserver = undefined;
     clearTimeout(focusTimeout);
-    focusedMessageId = keyboardPositions.has(id) ? id : null;
-    activeDescendant = focusedMessageId ? row?.id ?? null : null;
+    focusedMessageId = null;
+    activeDescendant = null;
     const message = messages.find((m) => m.id === id);
     if (!message || message.revoked) return;
     if (picking || event.ctrlKey || event.metaKey) {

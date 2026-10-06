@@ -405,6 +405,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    min-height: 36px;
+    box-sizing: border-box;
     background: var(--raised);
     border: 0;
     border-radius: var(--radius);
