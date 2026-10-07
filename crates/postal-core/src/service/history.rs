@@ -596,6 +596,9 @@ impl Inbound {
         // A stored row is already complete; rebuilding it would only rewrite
         // its thumbnails.
         if let Some(row) = store.message(chat, &id).await.observed().filter(|row| !row.is_unavailable() || row.local.revoked || row.local.deleted) {
+            if !from_me && !row.header.from_me && is_forwarded(message) {
+                store.set_forwarded(chat, &id).await.logged();
+            }
             if !row.local.revoked && !row.local.deleted && !row.spoiler && row.media.once_kind.is_none() && row.system.kind.is_none() {
                 *sticker_changes |= self.on_sticker_pack(store, message).await.observed() == Some(true);
                 if row.media.kind.as_deref() == Some("sticker") && record_sticker(store, &row).await.observed() == Some(true) { *sticker_changes = true; }
@@ -637,6 +640,9 @@ impl Inbound {
         stored.local.read = true;
         match store.insert_history_row(&stored).await {
             Ok(Some(accepted)) => {
+                if !from_me && !accepted.header.from_me && is_forwarded(message) {
+                    store.set_forwarded(chat, &accepted.header.id).await.logged();
+                }
                 if !accepted.local.revoked && !accepted.local.deleted && !accepted.spoiler && accepted.media.once_kind.is_none() && accepted.system.kind.is_none() {
                     *sticker_changes |= self.on_sticker_pack(store, message).await.observed() == Some(true);
                     if accepted.media.kind.as_deref() == Some("sticker") && record_sticker(store, &accepted).await.observed() == Some(true) { *sticker_changes = true; }

@@ -2,6 +2,10 @@
   outgoing uploads and the typing indicator. Only the rows in and around the
   viewport are mounted (virtua); everything else lives in SQLite behind the
   cursor pager. Moved out of +page.svelte. -->
+<script module lang="ts">
+  export type ViewportAnchor = { id: string; top: number; scrollRevision: number };
+</script>
+
 <script lang="ts">
   import { t } from "$lib/i18n/localizer";
   import { onDestroy, tick } from "svelte";
@@ -302,6 +306,7 @@
 
   let list = $state<VListHandle>();
   let rail = $derived(scroller);
+  let scrollRevision = 0;
   let focusedMessageId = $state<string | null>(null);
   let activeDescendant = $state<string | null>(null);
   let focusRevision = 0;
@@ -318,6 +323,15 @@
     return indices;
   });
   function viewport() { return scroller?.querySelector<HTMLElement>(".message-viewport") ?? null; }
+
+  function noteScroll(event: WheelEvent | TouchEvent | KeyboardEvent | PointerEvent) {
+    if (event instanceof KeyboardEvent && !["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+    if (event instanceof PointerEvent) {
+      const element = viewport();
+      if (!element || event.target !== element || event.clientX < element.getBoundingClientRect().right - 16) return;
+    }
+    ++scrollRevision;
+  }
 
   function messageFocusLabel(message: StoredMessage) {
     const content = floatContent(message);
@@ -478,6 +492,7 @@
 
   /** Keeps the newest row in view; used after sends and on follow. */
   export function scrollToBottom() {
+    ++scrollRevision;
     const last = rows.length - 1;
     if (last >= 0) list?.scrollToIndex(last, { align: "end" });
   }
@@ -486,6 +501,7 @@
   export function scrollToUnread(): boolean {
     const index = rows.findIndex((row) => row.kind === "unread");
     if (index < 0) return false;
+    ++scrollRevision;
     list?.scrollToIndex(index, { align: "start" });
     return true;
   }
@@ -498,12 +514,39 @@
   export function revealMessage(id: string): boolean {
     const index = rowIndices.get(id);
     if (index === undefined) return false;
+    ++scrollRevision;
     const source = messages, request = ++revealRequest;
     list?.scrollToIndex(index, { align: "center" });
     void tick().then(() => requestAnimationFrame(() => {
       if (source !== messages || request !== revealRequest || !scroller?.isConnected) return;
       const target = [...(viewport()?.querySelectorAll<HTMLElement>("[data-id]") ?? [])].find((marker) => marker.dataset.id === id);
       target?.scrollIntoView({ block: "center" });
+    }));
+    return true;
+  }
+
+  export function captureAnchor(): ViewportAnchor | null {
+    const id = anchorId(), element = viewport();
+    if (!id || !element) return null;
+    const marker = [...element.querySelectorAll<HTMLElement>("[data-id]")].find((item) => item.dataset.id === id);
+    if (!marker) return null;
+    return { id, top: marker.getBoundingClientRect().top - element.getBoundingClientRect().top, scrollRevision };
+  }
+
+  export function restoreAnchor(anchor: ViewportAnchor | null): boolean {
+    if (!anchor || anchor.scrollRevision !== scrollRevision) return false;
+    const index = rowIndices.get(anchor.id), element = viewport(), virtualList = list;
+    if (index === undefined || !element || !virtualList) return false;
+    const marker = [...element.querySelectorAll<HTMLElement>("[data-id]")].find((item) => item.dataset.id === anchor.id);
+    if (marker) {
+      element.scrollTop += marker.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.top;
+      return true;
+    }
+    virtualList.scrollToIndex(index, { align: "start" });
+    void tick().then(() => requestAnimationFrame(() => {
+      if (anchor.scrollRevision !== scrollRevision || !element.isConnected) return;
+      const marker = [...element.querySelectorAll<HTMLElement>("[data-id]")].find((item) => item.dataset.id === anchor.id);
+      if (marker) element.scrollTop += marker.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.top;
     }));
     return true;
   }
@@ -553,6 +596,7 @@
   }
 
   function captureReadOnlyKeydown(event: KeyboardEvent) {
+    noteScroll(event);
     if (!readOnly || event.key === "Tab") return;
     const target = event.target instanceof Element ? event.target : null;
     if (target?.closest(".event .guests input") ||
@@ -578,6 +622,9 @@
   bind:this={scroller}
   onkeydown={onRailKeydown}
   onkeydowncapture={captureReadOnlyKeydown}
+  onwheel={noteScroll}
+  ontouchmove={noteScroll}
+  onpointerdown={noteScroll}
   onclickcapture={captureClick}>
   <span class="visually-hidden" id="message-rail-shortcuts">{t("help.messages")}</span>
   {#if switching && messages.length === 0}
@@ -590,12 +637,13 @@
     bind:this={list}
     class="message-viewport"
     data={rows}
-    getKey={(row) => row.key}
+    getKey={(row, index) => row?.key ?? `stale-${index}`}
     shift={prepending}
     bufferSize={0}
     onscroll={handleScroll}
     style="height: 100%;">
     {#snippet children(row: Vrow)}
+      {#if row}
       <div class="vrow">
         {#if row.kind === "e2e"}
           <p class="system e2e">
@@ -654,6 +702,7 @@
           <TypingIndicator typers={typerItems} {isGroup} avatarOf={avatarOf} />
         {/if}
       </div>
+      {/if}
     {/snippet}
   </VList>
 </div>

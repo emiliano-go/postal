@@ -44,6 +44,7 @@ async function withApp(run: (app: {
     markPlayed: (message: StoredMessage) => void;
   };
   ui: {
+    notice: string | null;
     reactionsFor: StoredMessage | null;
     removeMember: { chat: string; jid: string; name: string } | null;
     picking: Record<string, StoredMessage> | null;
@@ -212,6 +213,92 @@ test("unavailable rows reject content actions and recovered rows regain normal e
   });
 });
 
+test("automatic retry notices show actual completion and cannot cross accounts", async () => {
+  let active = "automatic-fixture", deferHealth = false, resolveHealth!: (view: unknown) => void;
+  const health = { automatic_running: true, last_report: null as null | {
+    automatic: boolean; requested: string[]; synced: string[];
+  } };
+  await withApp(async ({ loadEvents, session, ui }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    session.activeAccount = active;
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
+    await dispatchServiceEvent({ kind: "syncHealthChanged", automatic: true }, host);
+    assert.equal(ui.notice, "Retrying interrupted protocol synchronization.");
+    health.automatic_running = false;
+    health.last_report = { automatic: true, requested: ["regular_low"], synced: ["regular_low"] };
+    await dispatchServiceEvent({ kind: "syncHealthChanged", automatic: true }, host);
+    assert.equal(ui.notice, "Automatic protocol retry completed.");
+    health.last_report.synced = [];
+    await dispatchServiceEvent({ kind: "syncHealthChanged", automatic: true }, host);
+    assert.equal(ui.notice, "Automatic protocol retry did not finish. Check Synchronization in Settings.");
+    const previous = ui.notice;
+    deferHealth = true;
+    const pending = dispatchServiceEvent({ kind: "syncHealthChanged", automatic: true }, host);
+    await new Promise((resolve) => setImmediate(resolve));
+    active = "replacement-account"; session.activeAccount = active;
+    resolveHealth({ automatic_running: false, last_report: { automatic: true, requested: ["regular_low"], synced: ["regular_low"] } });
+    await pending;
+    assert.equal(ui.notice, previous);
+  }, (command) => command === "accounts" ? { accounts: [], active }
+    : command === "sync_health" ? deferHealth ? new Promise((resolve) => { resolveHealth = resolve; }) : health : undefined);
+});
+
+test("reload coalescing stays within account even for the same chat address", async () => {
+  await withApp(async ({ loadEvents, messages, chats, session, ui }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => false } });
+    const chat = "same@newsletter", reloads: string[] = [];
+    session.activeAccount = "first-account";
+    session.gateDone = true;
+    session.settings.notifications_enabled = false;
+    chats.selectedChat = chat;
+    messages.prepareChat(chat, 50);
+    ui.scrolledUp = false;
+    messages.reloadMessages = async () => { reloads.push(session.activeAccount!); return true; };
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
+    await dispatchServiceEvent({ kind: "channelMessagesChanged", jid: chat }, host);
+    session.activeAccount = "second-account";
+    messages.resetAccount(); messages.prepareChat(chat, 50);
+    await dispatchServiceEvent({ kind: "channelMessagesChanged", jid: chat }, host);
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.deepEqual(reloads, ["second-account"]);
+    messages.resetAccount();
+  });
+});
+
+test("reload restoration cannot override scrolling during an in-flight refresh", async () => {
+  await withApp(async ({ loadEvents, messages, chats, session, ui }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => false } });
+    const chat = "anchor@s";
+    session.activeAccount = "anchor-fixture";
+    session.settings.notifications_enabled = false;
+    session.gateDone = true;
+    chats.selectedChat = chat;
+    messages.prepareChat(chat, 50);
+    ui.scrolledUp = false;
+    let revision = 0, top = 42, following = 0, restored = 0;
+    let resolveReload!: () => void, entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    messages.reloadMessages = async () => { entered(); await new Promise<void>((resolve) => { resolveReload = resolve; }); return true; };
+    const host: EventHost = { reconnect: async () => {}, scrollToBottom: () => { following++; },
+      anchor: () => ({ id: "unread", top, scrollRevision: revision }),
+      reveal: (anchor) => {
+        if (anchor.scrollRevision !== revision) return false;
+        top = anchor.top; restored++; return true;
+      } };
+    await dispatchServiceEvent({ kind: "channelMessagesChanged", jid: chat }, host);
+    await started;
+    revision++; top = 170;
+    resolveReload();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(top, 170);
+    assert.equal(restored, 0);
+    assert.equal(following, 0, "stale anchor must not fall through to follow-bottom");
+    messages.resetAccount();
+  });
+});
+
 test("live updates survive a lost sync completion and flush deferred hints", async () => {
   const chat = "watchdog@s", row = { chat, id: "live", sender: "1@s", timestamp: 100,
     from_me: false, read: true, system_kind: null, text: "Live message" } as StoredMessage;
@@ -219,7 +306,7 @@ test("live updates survive a lost sync completion and flush deferred hints", asy
   await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
     const { dispatchServiceEvent } = await loadEvents();
     Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => false } });
-    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
     session.activeAccount = "watchdog-fixture";
     session.settings.notifications_enabled = false;
     chats.selectedChat = chat;
@@ -262,7 +349,7 @@ test("live updates survive a lost sync completion and flush deferred hints", asy
 test("sync completion flushes a burst once and watchdog never crosses accounts", async () => {
   await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
     const { dispatchServiceEvent } = await loadEvents();
-    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
     session.activeAccount = "burst-fixture";
     session.gateDone = true;
     session.settings.notifications_enabled = false;
@@ -304,7 +391,7 @@ test("history completion preserves dirty flags raised while its chat query is pe
     session.gateDone = true;
     session.settings.notifications_enabled = false;
     chats.selectedChat = null;
-    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
     const history = dispatchServiceEvent({ kind: "historyLoaded", chats: ["old@s"] }, host);
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(resolveChat);
@@ -331,7 +418,7 @@ test("old initial-sync completion cannot unlock the next account", async () => {
     const { dispatchServiceEvent } = await loadEvents();
     session.activeAccount = "old-sync-fixture";
     session.gateDone = false;
-    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
     const pending = dispatchServiceEvent({ kind: "initialSyncComplete", messages: 0, chats: 0 }, host);
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(resolveChat);
@@ -352,7 +439,7 @@ test("unavailable hints stay within the local window, read no placeholders, and 
   await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
     const { dispatchServiceEvent } = await loadEvents();
     Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => true } });
-    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
     const hint = (id = marker.id): ServiceEvent => ({ kind: "messageHint", chat, id, sender: "1@s", from_me: false, fresh: false, change: "content", status: null });
     const settle = () => new Promise((resolve) => setTimeout(resolve, 950));
     session.gateDone = true;

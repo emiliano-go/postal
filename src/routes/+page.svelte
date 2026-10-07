@@ -71,7 +71,7 @@
   import ChannelsPanel from "$lib/chat/ChannelsPanel.svelte";
   import ChannelActions from "$lib/chat/ChannelActions.svelte";
   import { channels } from "$lib/state/channels.svelte";
-  import MessageList from "$lib/messages/MessageList.svelte";
+  import MessageList, { type ViewportAnchor } from "$lib/messages/MessageList.svelte";
   import ComposerBar from "$lib/composer/ComposerBar.svelte";
   import AttachmentRecoveryPanel from "$lib/composer/AttachmentRecoveryPanel.svelte";
   import { findRecovery, saveAttachmentCopy } from "$lib/utils/attachment-recovery";
@@ -1484,8 +1484,8 @@
     // View callbacks the event dispatcher cannot own (scrolling, reconnecting).
     const host = {
       scrollToBottom,
-      anchor: () => messageList?.anchorId() ?? null,
-      reveal: (id: string) => { messageList?.revealMessage(id); },
+      anchor: () => messageList?.captureAnchor() ?? null,
+      reveal: (anchor: ViewportAnchor) => messageList?.restoreAnchor(anchor) ?? false,
       reconnect,
     };
 
@@ -2093,12 +2093,11 @@
 {/if}
 </div>
 
-{#if ui.menu}
-  {#key ui.menu}
-  {@const m = ui.menu.message}
+{#each ui.menu ? [ui.menu] : [] as menu (menu)}
+  {@const m = menu.message}
   <MessageMenu
-    x={ui.menu.x}
-    y={ui.menu.y}
+    x={menu.x}
+    y={menu.y}
     items={menuItems(m)}
     reactions={quickReactions}
     reactionReason={m.chat.endsWith("@newsletter") ? t("channels.read_only") : broadcastSendReason(m.chat)}
@@ -2106,11 +2105,11 @@
     onreact={(emoji) => reactMessages([m], emoji)}
     onmore={openEmojiFor}
     onclose={() => {
+      if (ui.menu !== menu) return;
       ui.menu = null;
       if (chats.selectedChat === m.chat) requestAnimationFrame(() => messageList?.focusRail());
     }} />
-  {/key}
-{/if}
+{/each}
 
 {#if ui.emojiFor}
   <ExpressionPicker

@@ -190,9 +190,6 @@ impl WhatsAppService {
         let locator = (!view_once).then(|| media_locator(&message));
         group_history::guard_ordinary_message(&message)?;
         let result = self.client.send_message(to, message).await?;
-        if forwarded {
-            self.store.set_forwarded(chat, &result.message_id).await?;
-        }
         // One-time media is never kept: the sender cannot reopen it either.
         let stored_path = if view_once {
             None
@@ -453,9 +450,6 @@ impl WhatsAppService {
         let locator = media_locator(&message);
         group_history::guard_ordinary_message(&message)?;
         let result = self.client.send_message(to, message).await?;
-        if forwarded {
-            self.store.set_forwarded(chat, &result.message_id).await?;
-        }
 
         let media_path = self.media_dir().and_then(|dir| {
             std::fs::create_dir_all(&dir).observed()?;

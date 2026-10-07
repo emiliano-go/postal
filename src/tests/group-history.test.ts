@@ -46,10 +46,17 @@ test("the member picker renders history off and unavailable until policy is load
       onavatar() {}, onclose() {}, async onadd() { throw new Error("render must not add members"); },
       async onretryhistory() { throw new Error("render must not retry history"); } } });
     const checkbox = result.body.match(/<input[^>]*type="checkbox"[^>]*>/)?.[0];
+    assert.match(result.body, /<dialog[^>]*aria-label=/);
+    assert.doesNotMatch(result.body, /class="backdrop"/);
     assert.ok(checkbox);
     assert.match(checkbox, /disabled/);
     assert.doesNotMatch(checkbox, /checked/);
     assert.match(result.body, /Checking history sharing availability/);
     assert.match(result.body, /Share recent history with selected people/);
+    const { default: ConfirmDialog } = await server.ssrLoadModule(fileURLToPath(new URL("../lib/ui/ConfirmDialog.svelte", import.meta.url)));
+    const confirmation = render(ConfirmDialog, { props: { label: "Remove members", title: "Remove?", hint: "Synthetic",
+      actions: () => {}, onclose() {} } });
+    assert.match(confirmation.body, /<dialog[^>]*aria-label="Remove members"/);
+    assert.doesNotMatch(confirmation.body, /class="sheet-backdrop"/);
   } finally { await server.close(); }
 });

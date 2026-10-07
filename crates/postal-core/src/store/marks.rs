@@ -59,7 +59,7 @@ impl MessageStore {
             polls: scope.polls_with_votes()?,
             events: scope.events_with_responses()?,
             view_once: scope.view_once()?,
-            forwarded: scope.simple_marks("forwarded")?,
+            forwarded: scope.forwarded()?,
             edited: scope.simple_marks("edited")?,
             download_failures: scope.download_failures()?,
         })
@@ -68,7 +68,8 @@ impl MessageStore {
     pub fn set_forwarded(&self, chat: &str, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
-        conn.execute("INSERT OR IGNORE INTO forwarded (chat, id) VALUES (?1, ?2)", params![chat, id])?;
+        conn.execute("INSERT OR IGNORE INTO forwarded (chat, id)
+            SELECT chat,id FROM messages WHERE chat=?1 AND id=?2 AND from_me=0", params![chat, id])?;
         Ok(())
     }
 
@@ -415,6 +416,13 @@ impl MarksScope<'_> {
         Ok(rows)
     }
 
+    fn forwarded(&self) -> Result<Vec<String>> {
+        Ok(self.conn.prepare("SELECT f.id FROM forwarded f JOIN messages m ON m.chat=f.chat AND m.id=f.id
+            WHERE f.chat=?1 AND m.from_me=0 AND (?2 IS NULL OR f.id IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![self.chat, self.window], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     fn download_failures(&self) -> Result<Option<BTreeMap<String, MessageFailure>>> {
         let rows = self.conn.prepare("SELECT id,download_error FROM messages WHERE chat=?1 AND download_error IS NOT NULL
             AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
@@ -423,6 +431,26 @@ impl MarksScope<'_> {
         let mut failures = BTreeMap::new();
         for (id, json) in rows { failures.insert(id, serde_json::from_str(&json)?); }
         Ok((!failures.is_empty()).then_some(failures))
+    }
+}
+
+#[cfg(test)]
+mod forwarded_tests {
+    use super::*;
+
+    #[test]
+    fn forwarded_marks_only_project_received_rows_including_legacy_marks() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        for (id, from_me) in [("received", false), ("sent", true)] {
+            store.insert_message(&StoredMessage {
+                header: MessageHeader { chat: "1@g.us".into(), id: id.into(), from_me, timestamp: 1,
+                    sender: "2@s.whatsapp.net".into() }, text: "hello".into(), ..Default::default()
+            }).unwrap();
+            store.set_forwarded("1@g.us", id).unwrap();
+        }
+        store.conn.lock().unwrap().execute("INSERT INTO forwarded(chat,id) VALUES ('1@g.us','sent')", []).unwrap();
+        assert_eq!(store.marks("1@g.us").unwrap().forwarded, ["received"]);
+        assert!(store.marks_for("1@g.us", Some(&["sent".into()])).unwrap().forwarded.is_empty());
     }
 }
 

@@ -1091,12 +1091,12 @@ impl Inbound {
         if decoded_message(&inbound.message).view_once {
             ctx.store.set_view_once(&incoming.chat, &message.header.id, incoming.from_me).await.logged();
         }
-        if is_forwarded(&inbound.message) {
-            ctx.store.set_forwarded(&incoming.chat, &message.header.id).await.logged();
-        }
         self.recall_quoted(ctx, &incoming.chat, &message).await;
         let live = ctx.live && !inbound.info.is_offline;
         let Some(message) = self.store_and_track(ctx, &incoming.chat, &message, live).await else { return };
+        if !message.header.from_me && is_forwarded(&inbound.message) {
+            ctx.store.set_forwarded(&incoming.chat, &message.header.id).await.logged();
+        }
         if super::broadcast_lists::remember_broadcast_list(ctx.store, &incoming.chat, &message.header.id,
             &inbound.info.bcl_participants).await.observed() == Some(true) {
             ctx.broadcast_chats.lock().unwrap().insert(incoming.chat.clone());

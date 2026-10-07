@@ -210,8 +210,8 @@ impl SyncHealthState {
         self.notify(false);
     }
 
-    fn schedule_auto_check(self: &Arc<Self>) {
-        if self.checking.swap(true, Ordering::AcqRel) {
+    fn schedule_auto_retry(self: &Arc<Self>, collections: Vec<SyncCollection>) {
+        if collections.is_empty() || self.checking.swap(true, Ordering::AcqRel) {
             return;
         }
         let Some(client) = self.client.get().and_then(Weak::upgrade) else {
@@ -224,23 +224,7 @@ impl SyncHealthState {
             if !client.is_connected() || state.current.lock().unwrap().automatic_attempted {
                 return;
             }
-            let mut mismatched = Vec::new();
-            for collection in SyncCollection::ALL {
-                match client
-                    .persistence_manager()
-                    .backend()
-                    .get_version(collection.patch().as_str())
-                    .await
-                {
-                    Ok(Some(version)) if version.mac_mismatch_fatal => mismatched.push(collection),
-                    Ok(_) => {}
-                    Err(error) => log::warn!(
-                        "could not inspect {} sync baseline: {error}",
-                        collection.patch().as_str()
-                    ),
-                }
-            }
-            if mismatched.is_empty() || state.busy.load(Ordering::Acquire) {
+            if state.busy.load(Ordering::Acquire) {
                 return;
             }
             {
@@ -253,7 +237,7 @@ impl SyncHealthState {
             }
             state.notify(true);
             let result = state
-                .repair(&client, Some(mismatched), SyncMode::Full, true)
+                .repair(&client, Some(collections), SyncMode::Incremental, true)
                 .await;
             {
                 let mut current = state.current.lock().unwrap();
@@ -491,21 +475,27 @@ impl WhatsAppService {
 
 struct SyncHandler(Arc<SyncHealthState>, bool);
 
+fn retryable_collections(failed: &whatsapp_rust::wacore::types::events::AppStateSyncFailed) -> Vec<SyncCollection> {
+    failed.retryable.iter()
+        .filter(|name| !failed.fatal.contains(name) && !failed.skipped.contains(name))
+        .filter_map(|name| SyncCollection::from_name(name))
+        .collect::<BTreeSet<_>>().into_iter().collect()
+}
+
 impl EventHandler for SyncHandler {
     fn handle_event(&self, event: Arc<Event>) {
         match event.as_ref() {
             Event::AppStateSyncFailed(failed) => {
                 self.0.record_failure(failed);
-                self.0.schedule_auto_check();
+                self.0.schedule_auto_retry(retryable_collections(failed));
             }
-            Event::Connected(_) => self.0.schedule_auto_check(),
             _ => {}
         }
     }
 
     fn interest(&self) -> EventInterest {
         if self.1 {
-            EventInterest::of(&[EventKind::AppStateSyncFailed, EventKind::Connected])
+            EventInterest::of(&[EventKind::AppStateSyncFailed])
         } else {
             EventInterest::none()
         }
@@ -614,5 +604,18 @@ mod tests {
         assert_eq!(current.verdicts.get(&SyncCollection::CriticalUnblockLow), Some(&SyncStatus::Retryable));
         assert_eq!(current.verdicts.get(&SyncCollection::RegularHigh), Some(&SyncStatus::Skipped));
         assert!(!current.verdicts.contains_key(&SyncCollection::CriticalBlock));
+    }
+
+    #[test]
+    fn automatic_retry_uses_only_named_retryable_failures() {
+        let failed = whatsapp_rust::wacore::types::events::AppStateSyncFailed::builder()
+            .fatal(vec!["regular".to_owned()])
+            .retryable(vec!["regular_low".to_owned(), "regular_low".to_owned(), "regular".to_owned(), "regular_high".to_owned(), "channels".to_owned()])
+            .skipped(vec!["regular_high".to_owned()])
+            .connected(true).build();
+        assert_eq!(retryable_collections(&failed), vec![SyncCollection::RegularLow]);
+        let fatal = whatsapp_rust::wacore::types::events::AppStateSyncFailed::builder()
+            .fatal(vec!["regular_low".to_owned()]).retryable(Vec::new()).skipped(Vec::new()).connected(true).build();
+        assert!(retryable_collections(&fatal).is_empty());
     }
 }

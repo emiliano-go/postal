@@ -4,6 +4,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
   import { changeText, historyReceivers, historyResultText } from "$lib/utils/group-actions";
   import { members as contactMembers } from "$lib/state/members.svelte";
   import { session } from "$lib/state/session.svelte";
@@ -214,12 +215,13 @@
 
 <svelte:window onkeydowncapture={escape} />
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<div
-  class="backdrop"
-  role="presentation"
-  onclick={(e) => e.target === e.currentTarget && close()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label={t("group.add_participants_label", { name: title })}>
+<Dialog
+  open={true}
+  label={t("group.add_participants_label", { name: title })}
+  size="sm"
+  style="width:min(420px,calc(100vw - 32px));max-height:min(560px,calc(100vh - 80px));padding:0;border:0;background:transparent;box-shadow:none;overflow:visible;"
+  onclose={close}>
+  <div class="dialog">
     <header>
       <h2>{t("group.add_to", { name: title })}</h2>
       <button class="close" aria-label={t("ui.close")} disabled={busy} onclick={close}><Icon name="x" size={18} /></button>
@@ -299,19 +301,9 @@
       <button class="button" disabled={busy} onclick={close}>{t("ui.done")}</button>
     </footer>
   </div>
-</div>
+</Dialog>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 250;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--scrim);
-    backdrop-filter: blur(2px);
-  }
   .dialog {
     display: flex;
     flex-direction: column;

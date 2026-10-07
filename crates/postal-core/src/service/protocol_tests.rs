@@ -361,6 +361,54 @@ pub(super) fn history_chunk(chat: &str, id: &str, session: Option<&str>) -> Lazy
 }
 
 #[tokio::test]
+async fn forwarded_mark_tracks_received_live_and_history_without_marking_own_echo() {
+    let (handler, _) = inbound().await;
+    let chat = "1@g.us";
+    let forwarded = || wa::Message {
+        extended_text_message: MessageField::some(wa::message::ExtendedTextMessage {
+            text: Some("forwarded text".into()),
+            context_info: MessageField::some(wa::ContextInfo { is_forwarded: Some(true), ..Default::default() }),
+            ..Default::default()
+        }), ..Default::default()
+    };
+    for (id, from_me) in [("live-received", false), ("live-own", true)] {
+        let sender = if from_me { "3@s.whatsapp.net" } else { "2@s.whatsapp.net" };
+        let info = MessageInfo { id: id.into(), source: MessageSource {
+            chat: chat.parse().unwrap(), sender: sender.parse().unwrap(), is_group: true,
+            is_from_me: from_me, ..Default::default()
+        }, ..Default::default() };
+        let message = InboundMessage::builder().message(Arc::new(forwarded())).info(Arc::new(info)).build();
+        handler.handle(&Event::Messages(MessageBatch::builder()
+            .messages(vec![message].into()).origin(BatchOrigin::Live).build())).await;
+    }
+    handler.store.insert_message(&StoredMessage { header: MessageHeader {
+        chat: chat.into(), id: "history-existing".into(), sender: "2@s.whatsapp.net".into(),
+        timestamp: 99, from_me: false }, text: "forwarded text".into(), ..Default::default()
+    }).await.unwrap();
+    let history = wa::HistorySync {
+        sync_type: wa::history_sync::HistorySyncType::RECENT,
+        conversations: vec![wa::Conversation { id: chat.into(), messages: [
+            ("history-received", false), ("history-own", true), ("history-existing", false)
+        ].into_iter().map(|(id, from_me)| wa::HistorySyncMsg {
+            message: MessageField::some(wa::WebMessageInfo {
+                key: MessageField::some(wa::MessageKey { remote_jid: Some(chat.into()),
+                    id: Some(id.into()), from_me: Some(from_me), ..Default::default() }),
+                message: MessageField::some(forwarded()), message_timestamp: Some(100), ..Default::default()
+            }), ..Default::default()
+        }).collect(), ..Default::default() }], ..Default::default()
+    };
+    let raw = history.encode_to_vec();
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&raw).unwrap();
+    let chunk = LazyHistorySync::new(encoder.finish().unwrap().into(), raw.len(),
+        wa::history_sync::HistorySyncType::RECENT as i32, Some(0), Some(100));
+    handler.on_history_sync(&chunk).await;
+    let mut marks = handler.store.marks(chat).await.unwrap().forwarded;
+    marks.sort();
+    assert_eq!(marks, ["history-existing", "history-received", "live-received"]);
+}
+
+#[tokio::test]
 async fn group_notices_preserve_distinct_changes_actors_and_history_replay() {
     use whatsapp_rust::wacore::{stanza::groups::{GroupNotificationAction as A, GroupParticipantInfo}, types::events::GroupUpdate};
     use wa::web_message_info::StubType;

@@ -6,7 +6,8 @@ import { tick } from "svelte";
 import { invoke, log } from "$lib/utils/ipc";
 import { bare, isUnavailable } from "$lib/utils/message";
 import type { MessagePage } from "$lib/utils/message-window";
-import type { ChatSettings } from "$lib/utils/wire";
+import type { ChatSettings, SyncHealthView } from "$lib/utils/wire";
+import type { ViewportAnchor } from "$lib/messages/MessageList.svelte";
 import type { ServiceEvent, StoredMessage } from "$lib/utils/models";
 import {
   groupNotificationBody,
@@ -38,8 +39,8 @@ import { announceMessage, announceStatus, announceTyping } from "$lib/utils/acce
 export type EventHost = {
   scrollToBottom(): void;
   /** The first row on screen, so a full reload can keep the reader's place. */
-  anchor(): string | null;
-  reveal(id: string): void;
+  anchor(): ViewportAnchor | null;
+  reveal(anchor: ViewportAnchor): boolean;
   reconnect(): Promise<void>;
 };
 
@@ -139,7 +140,7 @@ function queueMarkRead(chat: string) {
 }
 
 /** The same for the open chat; `markRead` marks what arrived as seen if the window has focus. */
-let messagesQueued: { chat: string; follow: boolean; markRead: boolean } | null = null;
+let messagesQueued: { chat: string; follow: boolean; markRead: boolean; account: string | null; generation: number } | null = null;
 function queueReloadMessages(
   host: EventHost,
   chat: string | null,
@@ -147,24 +148,27 @@ function queueReloadMessages(
   markRead: boolean,
 ) {
   if (!chat) return;
-  if (messagesQueued?.chat === chat) {
+  const account = session.activeAccount, generation = messages.accountGeneration;
+  if (messagesQueued?.chat === chat && messagesQueued.account === account && messagesQueued.generation === generation) {
     messagesQueued.follow ||= follow;
     messagesQueued.markRead ||= markRead;
     return;
   }
-  const queued = (messagesQueued = { chat, follow, markRead });
+  const queued = (messagesQueued = { chat, follow, markRead, account, generation });
   setTimeout(async () => {
     if (messagesQueued === queued) messagesQueued = null;
-    if (chats.selectedChat !== queued.chat) return;
+    const current = () => account === session.activeAccount && generation === messages.accountGeneration && chats.selectedChat === queued.chat;
+    if (!current()) return;
     // Anchor the view across the reload: appended messages must not shift what
     // a scrolled-up reader is looking at. The follow below re-pins to the
     // bottom afterwards when the reader is there.
     const anchor = host.anchor();
-    await messages.reloadMessages(queued.chat);
-    if (anchor) host.reveal(anchor);
+    const loaded = await messages.reloadMessages(queued.chat);
+    if (!loaded || !current()) return;
+    const restored = anchor ? host.reveal(anchor) : true;
     // Decide the follow at fire time: the reader may have scrolled up while
     // the reload was in flight, and must not be yanked back down.
-    if (queued.follow && messages.atLatest && !ui.scrolledUp) host.scrollToBottom();
+    if (restored && queued.follow && messages.atLatest && !ui.scrolledUp) host.scrollToBottom();
     if (queued.markRead) queueMarkRead(queued.chat);
   }, 100);
 }
@@ -321,6 +325,8 @@ function queueNotification(work: (scope: NotificationScope) => Promise<void>) {
 /** When each unnamed group's subject was last asked for; the core backs off failed ones. */
 const askedSubjects = new Map<string, number>();
 let automaticRepairNoticeScope: string | null = null;
+let automaticRepairNoticePhase: string | null = null;
+let automaticRepairNoticeRequest = 0;
 
 export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHost) {
   log("debug", `event ${payload.kind}: uiUnlocked=${session.uiUnlocked} syncPending=${session.syncPending} historyActive=${messages.historyActive} chatsDirty=${chatsDirty} messagesDirty=${messagesDirty}`);
@@ -481,10 +487,24 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "syncHealthChanged": {
       void session.loadAccounts();
-      const scope = `${session.activeAccount}:${messages.accountGeneration}`;
-      if (payload.automatic && automaticRepairNoticeScope !== scope) {
-        automaticRepairNoticeScope = scope;
-        ui.notify(uiMessage("sync.auto_running"));
+      const account = session.activeAccount, generation = messages.accountGeneration;
+      if (!payload.automatic || !account) break;
+      const request = ++automaticRepairNoticeRequest;
+      try {
+        const health = await invoke<SyncHealthView>("sync_health", { accountId: account });
+        if (request !== automaticRepairNoticeRequest || account !== session.activeAccount || generation !== messages.accountGeneration) break;
+        const report = health.last_report;
+        const phase = health.automatic_running ? "sync.auto_running"
+          : report?.automatic && report.requested.length > 0 && report.requested.every((collection) => report.synced.includes(collection))
+            ? "sync.auto_succeeded" : "sync.auto_failed";
+        const scope = `${account}:${generation}`;
+        if (automaticRepairNoticeScope !== scope || automaticRepairNoticePhase !== phase) {
+          automaticRepairNoticeScope = scope;
+          automaticRepairNoticePhase = phase;
+          ui.notify(uiMessage(phase));
+        }
+      } catch (error) {
+        if (account === session.activeAccount && generation === messages.accountGeneration) ui.fail(error);
       }
       break;
     }

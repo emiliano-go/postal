@@ -231,6 +231,19 @@
         rail!.scrollToBottom(); await until(() => inView("child-5"), "virtual bottom did not restore last child");
         const visibleAnchor = rail!.anchorId();
         assert(visibleAnchor && inView(visibleAnchor), "virtual anchor comes from actual visible content instead of overscan");
+        const snapshot = rail!.captureAnchor();
+        if (!snapshot) throw new Error("Reload anchor missing");
+        assert(snapshot && visibleAnchor === snapshot.id, "reload anchor captures visible message and pixel offset");
+        rows = [row("reload-prefix", null, { media_kind: null, timestamp: 1 }), ...rows]; await tick(); await wait();
+        assert(rail!.restoreAnchor(snapshot), "reload anchor restores while reader has not moved");
+        await until(() => {
+          const marker = scroller!.querySelector<HTMLElement>(`[data-id="${snapshot.id}"]`);
+          return marker && Math.abs(marker.getBoundingClientRect().top - viewport().getBoundingClientRect().top - snapshot.top) < 2;
+        }, "reload anchor did not preserve its pixel offset");
+        const staleAnchor = rail!.captureAnchor();
+        viewport().dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 24 }));
+        assert(!rail!.restoreAnchor(staleAnchor), "reload anchor refuses to override a reader scroll");
+        checks.push("reload anchor preserves visible message pixel offset and rejects restore after reader scroll");
         assert(metrics.viewport > 0 && metrics.offset >= 0 && metrics.distance >= -1, "collaborator VList scroll metrics remain available");
         await replace([...ordinary, virtualParent, ...virtualChildren], "child-3");
         assert(rail!.scrollToUnread(), "virtual unread divider exists after album split");
@@ -240,6 +253,11 @@
         }, "virtual unread divider did not enter viewport");
         await replace(virtualChildren.slice(0, 2));
         assert(!rail!.hasMessage("parent"), "missing envelope is not fabricated by child association lookup");
+        rows = [...ordinary, virtualParent, ...virtualChildren]; await tick(); rail!.scrollToBottom();
+        await until(() => inView("child-5"), "long chat did not reach virtual tail before switch");
+        rows = [ordinary[0]]; await tick(); await wait();
+        assert(ids().join() === "rail-0" && rail!.hasMessage("rail-0"), "rapid long-to-short chat switch skips stale virtual indexes");
+        checks.push("rapid long-to-short chat switch keeps stale virtual indexes from crashing row rendering");
         checks.push("actual VList unmounting, every child/parent lookup, offscreen and tall-group reveals, visible anchor, metrics and unread split");
         frameHeight = 3000;
 

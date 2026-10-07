@@ -1,6 +1,7 @@
 <!-- The small confirm sheet shared by delete/report style actions. -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Dialog from "$lib/ui/Dialog.svelte";
 
   let {
     label,
@@ -15,31 +16,27 @@
     actions: Snippet;
     onclose: () => void;
   } = $props();
+
+  function escape(event: KeyboardEvent) {
+    if (event.key === "Escape") event.stopPropagation();
+  }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<div
-  class="sheet-backdrop"
-  role="presentation"
-  onclick={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="sheet confirm" role="dialog" aria-modal="true" aria-label={label}>
+<Dialog
+  open={true}
+  {label}
+  size="sm"
+  style="width:min(400px,90vw);max-height:86vh;padding:0;border:0;background:transparent;box-shadow:none;overflow:visible;"
+  {onclose}
+  onkeydown={escape}>
+  <div class="sheet confirm">
     <h2>{title}</h2>
     <p class="hint">{hint}</p>
     <div class="confirm-actions">{@render actions()}</div>
   </div>
-</div>
+</Dialog>
 
 <style>
-  .sheet-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 250;
-    background: var(--scrim);
-    backdrop-filter: blur(2px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
   .sheet {
     background: var(--surface);
     border: 1px solid var(--line-strong);

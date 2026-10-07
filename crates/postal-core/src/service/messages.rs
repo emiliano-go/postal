@@ -458,7 +458,6 @@ impl WhatsAppService {
                 };
                 group_history::guard_ordinary_message(&content)?;
                 let result = self.client.send_message(to, content).await?;
-                self.store.set_forwarded(to_chat, &result.message_id).await?;
                 let stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
                 let stored = self.store.insert_message_row(&stored).await?;
                 let _ = self.events.send(ServiceEvent::arrival(&stored));
