@@ -177,6 +177,49 @@ mod tests {
     }
 
     #[test]
+    fn startup_logger_child() {
+        let Some(path) = std::env::var_os("POSTAL_LOG_TEST_PATH").map(PathBuf::from) else { return; };
+        let mode = std::env::var("POSTAL_LOG_TEST_MODE").unwrap();
+        let result = super::init_logging(&path, false);
+        if mode == "blocked" {
+            assert!(result.is_err());
+            log::info!(target: "postal_core::service", "synthetic stderr fallback event");
+            return;
+        }
+        result.unwrap();
+        log::info!(target: "postal_core::service", "synthetic live event before rotation");
+        let initial = std::fs::read_to_string(&path).unwrap();
+        assert!(initial.contains("Postal ") && initial.contains("synthetic live event before rotation"));
+        if mode == "rotate" {
+            let missing = LOG_LIMIT as usize - initial.len();
+            std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(&vec![b'x'; missing]).unwrap();
+            log::info!(target: "postal_core::service", "synthetic live event after rotation");
+            assert!(std::fs::read_to_string(&path).unwrap().contains("synthetic live event after rotation"));
+            let old = std::fs::read_to_string(path.with_extension("log.old")).unwrap();
+            assert!(old.contains("Postal ") && old.contains("synthetic live event before rotation"));
+        }
+    }
+
+    #[test]
+    fn startup_logger_runs_in_fresh_process_and_reports_open_failure() {
+        for mode in ["fresh", "rotate", "blocked"] {
+            let dir = temp_dir();
+            let path = dir.join("postal.log");
+            if mode == "blocked" { std::fs::create_dir(&path).unwrap(); }
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "logging::tests::startup_logger_child", "--nocapture"])
+                .env("POSTAL_LOG_TEST_PATH", &path).env("POSTAL_LOG_TEST_MODE", mode)
+                .env_remove("RUST_LOG").output().unwrap();
+            assert!(output.status.success(), "{mode}: {}", String::from_utf8_lossy(&output.stderr));
+            if mode == "blocked" {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(stderr.contains("logging to stderr only") && stderr.contains("synthetic stderr fallback event"));
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
     fn boot_and_filtered_logger_target_write_after_rotation() {
         let dir = temp_dir();
         let path = dir.join("postal.log");
