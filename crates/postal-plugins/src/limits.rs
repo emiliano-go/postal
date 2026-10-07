@@ -394,6 +394,60 @@ mod platform {
         use std::{process::Stdio, time::Duration};
         use tokio::process::Command;
 
+        #[cfg(target_os = "macos")]
+        fn vm_size(pid: i32) -> Option<u64> {
+            let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+            let size = std::mem::size_of::<libc::proc_taskinfo>() as i32;
+            let read = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTASKINFO, 0, (&mut info as *mut libc::proc_taskinfo).cast(), size) };
+            (read == size).then_some(info.pti_virtual_size)
+        }
+
+        #[cfg(target_os = "macos")]
+        fn probe_limit_stage(stage: u8) -> Result<Option<u64>, String> {
+            use std::os::unix::process::CommandExt as _;
+            let mut command = std::process::Command::new("/bin/sleep");
+            command.arg("30").stdout(Stdio::null()).stderr(Stdio::null());
+            if stage != 0 {
+                unsafe {
+                    command.pre_exec(move || {
+                        let address = libc::rlimit { rlim_cur: MEMORY_BYTES as libc::rlim_t, rlim_max: MEMORY_BYTES as libc::rlim_t };
+                        let cpu = libc::rlimit { rlim_cur: CPU_SECONDS as libc::rlim_t, rlim_max: (CPU_SECONDS + 2) as libc::rlim_t };
+                        let result = match stage {
+                            1 => libc::setsid(),
+                            2 => libc::setrlimit(libc::RLIMIT_AS, &address),
+                            3 => libc::setrlimit(libc::RLIMIT_CPU, &cpu),
+                            _ => 0,
+                        };
+                        if result < 0 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
+                    });
+                }
+            }
+            let mut child = command.spawn().map_err(|error| error.to_string())?;
+            let vm = vm_size(child.id() as i32);
+            let killed = child.kill();
+            let reaped = child.wait();
+            killed.map_err(|error| format!("kill probe child: {error}"))?;
+            reaped.map_err(|error| format!("reap probe child: {error}"))?;
+            Ok(vm)
+        }
+
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn darwin_spawn_limit_stage_diagnostic() {
+            let mut inherited: libc::rlimit = unsafe { std::mem::zeroed() };
+            let rlimit = if unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut inherited) } == 0 {
+                Some((inherited.rlim_cur, inherited.rlim_max))
+            } else { None };
+            let parent_vm = vm_size(unsafe { libc::getpid() });
+            let plain = probe_limit_stage(0);
+            let session = probe_limit_stage(1);
+            let address = probe_limit_stage(2);
+            let cpu = probe_limit_stage(3);
+            assert!(parent_vm.is_some() && matches!(&plain, Ok(Some(_)))
+                && session.is_ok() && address.is_ok() && cpu.is_ok(),
+                "parent_vm={parent_vm:?} fresh_exec_vm={plain:?} inherited_rlimit_as={rlimit:?} setsid={session:?} rlimit_as={address:?} rlimit_cpu={cpu:?}");
+        }
+
         #[test]
         #[ignore]
         fn owned_group_child() {
