@@ -70,6 +70,7 @@
   import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
   import ChannelsPanel from "$lib/chat/ChannelsPanel.svelte";
+  import CallsPanel from "$lib/chat/CallsPanel.svelte";
   import ChannelActions from "$lib/chat/ChannelActions.svelte";
   import ChannelComposer from "$lib/chat/ChannelComposer.svelte";
   import { channels } from "$lib/state/channels.svelte";
@@ -89,6 +90,7 @@
   import { favorites } from "$lib/state/favorites.svelte";
   import { transcription } from "$lib/state/transcription.svelte";
   import { dispatchServiceEvent, queueRefreshChats } from "$lib/state/events";
+  import { callHistory } from "$lib/state/call-history.svelte";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
   import { keywords } from "$lib/state/keywords.svelte";
@@ -142,6 +144,7 @@
   let a11yPromptOpen = $state(false);
   let helpOpen = $state(false);
   let showChannels = $state(false);
+  let showCalls = $state(false);
   let channelEditing = $state<StoredMessage | null>(null);
   let channelRevoking = $state<StoredMessage | null>(null);
   $effect(() => {
@@ -464,6 +467,7 @@
   async function openChat(chat: string, jumpToMention = false, label: string | null = null) {
     ui.showInbox = false;
     showChannels = false;
+    showCalls = false;
     const opening = ++chatOpenSeq;
     const account = messages.accountGeneration;
     const current = () => opening === chatOpenSeq && account === messages.accountGeneration && chats.selectedChat === chat;
@@ -1826,8 +1830,9 @@
       globalAutoDownload={session.settings.auto_download_types}
       onmarkallread={markAllRead}
       onnewchat={() => (newChat = true)}
-      oninbox={() => { showChannels = false; ui.showInbox = !ui.showInbox; void labels.refresh(); }}
-      onchannels={() => { showChannels = true; ui.showInbox = false; }}
+      oninbox={() => { showChannels = false; showCalls = false; ui.showInbox = !ui.showInbox; void labels.refresh(); }}
+      onchannels={() => { showChannels = true; showCalls = false; ui.showInbox = false; }}
+      oncalls={() => { showChannels = false; showCalls = true; ui.showInbox = false; }}
       onlabels={() => { ui.manageLabels = true; void labels.refresh(); }}
       onchatlabels={(chat) => { ui.labelTargets = [{ chat }]; void labels.refresh(); }}
       bind:labelFilter={chats.labelFilter}
@@ -1862,6 +1867,11 @@
     <section class="conversation" aria-label={t("page.conversation")}>
       {#if showChannels}
         <ChannelsPanel account={session.activeAccount} generation={messages.accountGeneration} connected={session.connected} onOpen={(jid) => void openChat(jid)} />
+      {:else if showCalls}
+        <CallsPanel account={session.activeAccount} generation={messages.accountGeneration} connected={session.connected}
+          refreshKey={callHistory.revision}
+          labelFor={(jid) => { const chat = chats.chats.find((row) => row.chat === jid); return chat ? chats.chatLabel(chat) : members.displayName(null, jid); }}
+          onopen={(chat) => { showCalls = false; void openChat(chat); }} />
       {:else if ui.showInbox}
         <UnifiedInbox account={session.activeAccount} requestKey={`${messages.accountGeneration}:${inboxSeedKey}`} connected={session.connected}
           initialFilters={inboxSeed} onfilterschange={(filters) => { currentInboxFilters = { ...filters }; }}

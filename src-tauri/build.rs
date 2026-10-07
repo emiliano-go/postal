@@ -111,6 +111,7 @@ const COMMANDS: &[&str] = &[
     "add_group_participants_with_history",
     "retry_group_history",
     "favorite_chats",
+    "call_history",
     "set_favorite",
     "group_join_requests",
     "change_group_join_requests",

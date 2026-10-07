@@ -85,6 +85,7 @@
     onnewchat,
     oninbox = () => {},
     onchannels = () => {},
+    oncalls = () => {},
     onlabels = () => {},
     onchatlabels = () => {},
     labelFilter = $bindable(""),
@@ -162,6 +163,7 @@
     onmarkallread: () => void;
     onnewchat: () => void;
     oninbox?: () => void;
+    oncalls?: () => void;
     onlabels?: () => void;
     onchatlabels?: (chat: string) => void;
     labelFilter?: string;
@@ -516,6 +518,7 @@
   <header>
     <h1 class="title">{t("nav.chats")}</h1>
     <Button variant="icon" icon="message" iconSize={18} title={t("channels.title")} aria-label={t("channels.title")} onclick={onchannels} />
+    <Button variant="icon" title={t("calls.title")} aria-label={t("calls.title")} onclick={oncalls}><span aria-hidden="true">☎</span></Button>
     <Button
       variant="icon"
       icon="at"

@@ -37,6 +37,7 @@ mod groups;
 mod gallery;
 mod devices;
 mod favorites;
+mod call_history;
 mod floating;
 mod group_requests;
 mod scheduled;
@@ -200,6 +201,7 @@ macro_rules! postal_commands {
             groups::add_group_participants_with_history,
             groups::retry_group_history,
             favorites::favorite_chats,
+            call_history::call_history,
             favorites::set_favorite,
             group_requests::group_join_requests,
             group_requests::change_group_join_requests,

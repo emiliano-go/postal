@@ -118,6 +118,7 @@
     "allow-add-group-participants-with-history",
     "allow-retry-group-history",
     "allow-favorite-chats",
+    "allow-call-history",
     "allow-set-favorite",
     "allow-group-join-requests",
     "allow-change-group-join-requests",

@@ -1,12 +1,19 @@
 import type { StorageFile, StorageReport, StorageCleanup } from "../../src/lib/utils/storage";
 import type { Marks, StoredMessage } from "../../src/lib/utils/models";
 import type { MessageCursor } from "../../src/lib/utils/message-window";
-import type { ChannelPage, ChannelSummary, ChannelView } from "../../src/lib/utils/wire";
+import type { CallRecord, ChannelPage, ChannelSummary, ChannelView } from "../../src/lib/utils/wire";
 export const windowFixture = {
   archive: Array.from({ length: 350 }, (_, n) => ({ chat: "window@s", id: String(n).padStart(4, "0"), timestamp: 100, text: `Message ${n}` }) as StoredMessage),
   phoneRequests: 0, failure: false, deferNext: false, pending: [] as (() => void)[],
 };
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
+export const callHistoryFixture = {
+  calls: [] as { account: string; limit: number }[],
+  records: [] as CallRecord[],
+  failure: "",
+  deferNext: false,
+  pending: [] as (() => void)[],
+};
 export const pluginFixture = { enabled: false, failure: false, crashed: false };
 export const storeFixture = { corrupt: true, failure: false, healthCalls: 0, recoveryCalls: 0,
   deferNext: false, pending: [] as (() => void)[] };
@@ -73,6 +80,22 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   previewFixture.calls.push(command);
+  if (command === "call_history") {
+    callHistoryFixture.calls.push({ account: String(args?.account ?? ""), limit: Number(args?.limit ?? 0) });
+    const failure = callHistoryFixture.failure;
+    const records = structuredClone(callHistoryFixture.records);
+    const complete = () => {
+      if (failure) throw new Error(failure);
+      return records as T;
+    };
+    if (callHistoryFixture.deferNext) {
+      callHistoryFixture.deferNext = false;
+      return new Promise<T>((resolve, reject) => callHistoryFixture.pending.push(() => {
+        try { resolve(complete()); } catch (error) { reject(error); }
+      }));
+    }
+    return complete();
+  }
   if (["channels", "refresh_channels", "channel_metadata", "follow_channel", "unfollow_channel", "set_channel_muted", "set_channel_favorite", "channel_messages",
     "channel_can_post", "channel_post_text", "channel_post_media", "channel_post_poll", "channel_edit_text", "channel_revoke_post"].includes(command)) {
     channelsFixture.calls.push({ command, args });
@@ -377,3 +400,5 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     { name: "example_missing", code: 3, default: true, value: null },
   ] as T;
 }
+
+export function log(_level: string, _message: string) {}

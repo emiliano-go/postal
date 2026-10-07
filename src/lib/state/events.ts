@@ -20,6 +20,7 @@ import {
 import { isPlaceholder } from "$lib/utils/phone";
 import { chats } from "./chats.svelte";
 import { channels } from "./channels.svelte";
+import { callHistory } from "./call-history.svelte";
 import { labels } from "./labels.svelte";
 import { composer } from "./composer.svelte";
 import { favorites } from "./favorites.svelte";
@@ -695,6 +696,9 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "quickRepliesChanged":
       quickReplies.queueRefresh();
+      break;
+    case "callHistoryChanged":
+      callHistory.refresh();
       break;
   }
 }
