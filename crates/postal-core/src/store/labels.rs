@@ -82,11 +82,15 @@ impl MessageStore {
         Ok(LabelsView { complete: false, labels, chats, messages })
     }
 
-    pub fn labelled_messages(&self, label_ids: &[String], chat: Option<&str>, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+    pub fn labelled_messages(&self, label_ids: &[String], chat: Option<&str>, query: &str, limit: u32, chat_ids: Option<&[String]>) -> Result<Vec<StoredMessage>> {
         anyhow::ensure!(!label_ids.is_empty() && label_ids.len() <= 50 && label_ids.iter().all(|id| !id.is_empty()),
             MessageRef::new("error.label_selection_invalid").with_param("min", serde_json::Number::from(1))
                 .with_param("max", serde_json::Number::from(50)).with_param("actual", serde_json::Number::from(label_ids.len() as u64)));
+        if let Some(chat_ids) = chat_ids {
+            anyhow::ensure!(chat_ids.len() <= 20_000 && chat_ids.iter().all(|jid| !jid.is_empty() && jid.len() <= 512), "invalid chat selection");
+        }
         let ids = serde_json::to_string(label_ids)?;
+        let chat_ids = chat_ids.map(serde_json::to_string).transpose()?;
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").to_lowercase();
         let pattern = format!("%{escaped}%");
         let conn = self.conn.lock().unwrap();
@@ -103,11 +107,12 @@ impl MessageStore {
                    WHERE a.chat = m.chat AND a.message_id = m.id AND a.labeled = 1
                      AND l.deleted = 0 AND l.name <> '' AND a.label_id IN (SELECT value FROM json_each(?1)))
                AND (?2 IS NULL OR m.chat = ?2)
+               AND (?6 IS NULL OR m.chat IN (SELECT value FROM json_each(?6)))
                AND (lower(m.text) LIKE ?3 ESCAPE '\\' OR lower(m.link_urls) LIKE ?3 ESCAPE '\\')
                {fts_clause}
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC, m.chat ASC LIMIT ?4"
         ))?;
-        let rows = stmt.query_map(params![ids, chat, pattern, limit.clamp(1, 500), fts_pattern], message_row)?;
+        let rows = stmt.query_map(params![ids, chat, pattern, limit.clamp(1, 500), fts_pattern, chat_ids], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 

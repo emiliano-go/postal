@@ -1,11 +1,22 @@
 use postal_core::{ChatPage, ChatSummary};
+use std::sync::Arc;
 use tauri::State;
 use crate::{AppState, command_error::{CommandError, CommandResult}};
 
 /// Chat summaries, most recently active first.
 #[tauri::command(async)]
-pub(crate) async fn chats(state: State<'_, AppState>, mute_all_at_all: Option<bool>) -> CommandResult<Vec<ChatSummary>> {
-    state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?.chats_with(mute_all_at_all.unwrap_or(false)).await.map_err(CommandError::from)
+pub(crate) async fn chats(state: State<'_, AppState>, mute_all_at_all: Option<bool>, account_id: Option<String>) -> CommandResult<Vec<ChatSummary>> {
+    let service = match account_id.as_deref() {
+        Some(account) => state.account_service(account)?,
+        None => state.service()?,
+    };
+    let rows = service.chats_with(mute_all_at_all.unwrap_or(false)).await.map_err(CommandError::from)?;
+    let current = match account_id.as_deref() {
+        Some(account) => state.account_service(account)?,
+        None => state.service()?,
+    };
+    if !Arc::ptr_eq(&service, &current) { return Err(CommandError::code("error.account_changed")); }
+    Ok(rows)
 }
 
 #[tauri::command(async)]

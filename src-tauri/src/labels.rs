@@ -26,10 +26,10 @@ pub(crate) async fn labels_view(state: State<'_, AppState>, account_id: String) 
 
 #[tauri::command]
 pub(crate) async fn labelled_messages(
-    state: State<'_, AppState>, account_id: String, label_ids: Vec<String>, chat: Option<String>, query: String, limit: Option<u32>,
+    state: State<'_, AppState>, account_id: String, label_ids: Vec<String>, chat: Option<String>, query: String, limit: Option<u32>, chat_ids: Option<Vec<String>>,
 ) -> CommandResult<Vec<postal_core::store::StoredMessage>> {
     let service = state.account_service(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
-    let rows = service.labelled_messages(&label_ids, chat.as_deref(), &query, limit.unwrap_or(500))
+    let rows = service.labelled_messages(&label_ids, chat.as_deref(), &query, limit.unwrap_or(500), chat_ids.as_deref())
         .await.map_err(|error| { service.note_error(&error); CommandError::from(error) })?;
     let current = state.account_service(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     if !Arc::ptr_eq(&service, &current) { return Err(CommandError::code("error.account_changed")); }

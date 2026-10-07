@@ -346,15 +346,24 @@
   const unreadPings = $derived(chats.unreadPings + (keywords.account === session.activeAccount
     ? Object.values(keywords.counts).reduce((sum, count) => sum + count, 0) : 0));
   let inboxSource = $state.raw<ChatSummary[]>([]);
+  let inboxSourceAccount = $state<string | null>(null);
+  let inboxLoading = $state(false);
+  let inboxError = $state<LocalizedError | null>(null);
   let inboxRequest = 0;
   $effect(() => {
-    const account = session.activeAccount;
-    if (!ui.showInbox || !account) { inboxSource = []; return; }
+    const account = session.activeAccount, generation = messages.accountGeneration;
+    if (!ui.showInbox || !account) { ++inboxRequest; inboxSource = []; inboxSourceAccount = null; inboxLoading = false; inboxError = null; return; }
+    void chats.chats;
     const request = ++inboxRequest;
-    void chats.allChats().then((rows) => { if (ui.showInbox && session.activeAccount === account && request === inboxRequest) inboxSource = rows; })
-      .catch((error) => { if (ui.showInbox && session.activeAccount === account && request === inboxRequest) ui.fail(error); });
+    const current = () => ui.showInbox && session.activeAccount === account && messages.accountGeneration === generation && request === inboxRequest;
+    inboxLoading = true; inboxError = null;
+    untrack(() => {
+      void chats.allChats(false).then((rows) => { if (current()) { inboxSource = rows; inboxSourceAccount = account; } })
+        .catch((error) => { if (current()) { inboxError = normalizeError(error); ui.fail(error); } })
+        .finally(() => { if (current()) inboxLoading = false; });
+    });
   });
-  const inboxChats = $derived(inboxSource.map((chat) => ({ ...chat, mention_count: chat.mention_count
+  const inboxChats = $derived((inboxSourceAccount === session.activeAccount ? inboxSource : []).map((chat) => ({ ...chat, mention_count: chat.mention_count
     + (keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0) })));
   let forwardingRows = $state.raw<ChatSummary[]>([]);
   let forwardingRequest = 0;
@@ -1874,14 +1883,16 @@
           onopen={(chat) => { showCalls = false; void openChat(chat); }} />
       {:else if ui.showInbox}
         <UnifiedInbox account={session.activeAccount} requestKey={`${messages.accountGeneration}:${inboxSeedKey}`} connected={session.connected}
-          initialFilters={inboxSeed} onfilterschange={(filters) => { currentInboxFilters = { ...filters }; }}
+          initialFilters={inboxSeed} loading={inboxLoading} error={inboxError} onfilterschange={(filters) => { currentInboxFilters = { ...filters }; }}
           chats={inboxChats} labels={labels.loaded ? labels.view.labels : null} {labelsByChat}
+          messageLabels={labels.account === session.activeAccount ? labels.view.messages : []}
           labelsWritable={session.connected && labels.loaded && !labels.busy} labelsLoading={labels.loading} labelsError={labels.error ?? ""} labelsComplete={labels.view.complete}
           chatLabelOf={(chat) => chats.chatLabel(chat)} avatarOf={(jid) => chats.avatars[jid] ?? null}
           previewTextOf={(chat) => chats.previewText(chat)} {formatTime}
           syncPending={session.syncPending} syncApplied={session.syncApplied} historyPercent={session.historyPercent}
           backfill={session.backfill} finalizing={session.finalizing}
           onopen={(chat, mention) => { ui.showInbox = false; void openChat(chat, mention); }}
+          onopenmessage={(chat, id) => { ui.showInbox = false; void jumpTo(chat, id); }}
           onaction={inboxAction} onretry={() => { void chats.refreshChats(); void labels.refresh(); }} />
       {:else if chats.selectedChat}
         {@const selectedChat = chats.selectedChat}

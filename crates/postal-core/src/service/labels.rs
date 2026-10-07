@@ -37,11 +37,12 @@ impl WhatsAppService {
         self.store.run(MessageStore::labels_view).await
     }
 
-    pub async fn labelled_messages(&self, label_ids: &[String], chat: Option<&str>, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+    pub async fn labelled_messages(&self, label_ids: &[String], chat: Option<&str>, query: &str, limit: u32, chat_ids: Option<&[String]>) -> Result<Vec<StoredMessage>> {
         let label_ids = label_ids.to_vec();
         let chat = chat.map(label_chat_jid).transpose()?.map(|chat| chat.to_string());
         let query = query.to_owned();
-        self.store.run(move |store| store.labelled_messages(&label_ids, chat.as_deref(), &query, limit)).await
+        let chat_ids = chat_ids.map(<[String]>::to_vec);
+        self.store.run(move |store| store.labelled_messages(&label_ids, chat.as_deref(), &query, limit, chat_ids.as_deref())).await
     }
 
     pub async fn save_label(

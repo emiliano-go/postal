@@ -14,6 +14,14 @@ export const callHistoryFixture = {
   deferNext: false,
   pending: [] as (() => void)[],
 };
+export const labelledMessagesFixture = {
+  calls: [] as Record<string, unknown>[],
+  rows: [] as StoredMessage[],
+  labelsByMessage: {} as Record<string, string[]>,
+  failure: "",
+  deferNext: false,
+  pending: [] as (() => void)[],
+};
 export const pluginFixture = { enabled: false, failure: false, crashed: false };
 export const storeFixture = { corrupt: true, failure: false, healthCalls: 0, recoveryCalls: 0,
   deferNext: false, pending: [] as (() => void)[] };
@@ -80,6 +88,34 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   previewFixture.calls.push(command);
+  if (command === "labelled_messages") {
+    labelledMessagesFixture.calls.push({ ...(args ?? {}) });
+    const failure = labelledMessagesFixture.failure;
+    const labelIds = Array.isArray(args?.labelIds) ? args.labelIds.map(String) : [];
+    const selectedChats = Array.isArray(args?.chatIds) ? new Set(args.chatIds.map(String)) : null;
+    const query = String(args?.query ?? "").toLocaleLowerCase();
+    const chat = typeof args?.chat === "string" ? args.chat : null;
+    const limit = Math.max(1, Math.min(500, Number(args?.limit ?? 500)));
+    const records = labelledMessagesFixture.rows.filter((row) => {
+      const key = JSON.stringify([row.chat, row.id]);
+      const labels = labelledMessagesFixture.labelsByMessage[key] ?? [];
+      return labels.some((id) => labelIds.includes(id)) && (!chat || row.chat === chat)
+        && (selectedChats === null || selectedChats.has(row.chat))
+        && (!query || row.text.toLocaleLowerCase().includes(query));
+    }).sort((left, right) => right.timestamp - left.timestamp || right.sort_order - left.sort_order
+      || right.id.localeCompare(left.id) || left.chat.localeCompare(right.chat)).slice(0, limit);
+    const complete = () => {
+      if (failure) throw new Error(failure);
+      return structuredClone(records) as T;
+    };
+    if (labelledMessagesFixture.deferNext) {
+      labelledMessagesFixture.deferNext = false;
+      return new Promise<T>((resolve, reject) => labelledMessagesFixture.pending.push(() => {
+        try { resolve(complete()); } catch (error) { reject(error); }
+      }));
+    }
+    return complete();
+  }
   if (command === "call_history") {
     callHistoryFixture.calls.push({ account: String(args?.account ?? ""), limit: Number(args?.limit ?? 0) });
     const failure = callHistoryFixture.failure;

@@ -234,24 +234,52 @@ fn labelled_message_query_filters_before_limit_and_keeps_literal_text_and_urls()
     store.conn.lock().unwrap().execute("INSERT INTO hidden_chats VALUES ('hidden@g.us')", []).unwrap();
     store.set_label("deleted", None, None, Some(true), 20).unwrap();
     let ids = vec!["a".into(), "b".into(), "deleted".into()];
-    let found = store.labelled_messages(&ids, None, "needle", 500).unwrap();
+    let found = store.labelled_messages(&ids, None, "needle", 500, None).unwrap();
     assert_eq!(found.iter().map(|m| &*m.header.id).collect::<Vec<_>>(), vec!["safe"]);
-    assert_eq!(store.labelled_messages(&ids, Some(chat), "100%_\\", 500).unwrap().len(), 1);
-    assert_eq!(store.labelled_messages(&ids, None, "needle.synthetic.test", 500).unwrap().len(), 1);
+    assert_eq!(store.labelled_messages(&ids, Some(chat), "100%_\\", 500, None).unwrap().len(), 1);
+    assert_eq!(store.labelled_messages(&ids, None, "needle.synthetic.test", 500, None).unwrap().len(), 1);
     let mut other = safe.clone();
     other.header.chat = "2@g.us".into();
     store.insert_message(&other).unwrap();
     store.set_message_label("a", "2@g.us", "safe", true, 10).unwrap();
-    assert_eq!(store.labelled_messages(&ids, Some(chat), "needle", 500).unwrap().len(), 1);
-    assert_eq!(store.labelled_messages(&ids, None, "needle", 500).unwrap().len(), 2);
+    assert_eq!(store.labelled_messages(&ids, Some(chat), "needle", 500, None).unwrap().len(), 1);
+    assert_eq!(store.labelled_messages(&ids, None, "needle", 500, None).unwrap().len(), 2);
     store.set_lid_pn("123", "5989").unwrap();
-    assert_eq!(store.labelled_messages(&ids, Some("123@lid"), "needle", 500).unwrap()[0].header.chat, chat);
-    assert_eq!(store.labelled_messages(&ids, None, "", 0).unwrap().len(), 1);
-    assert!(store.labelled_messages(&[], None, "", 500).is_err());
-    assert!(store.labelled_messages(&["".into()], None, "", 500).is_err());
-    assert!(store.labelled_messages(&vec!["a".into(); 51], None, "", 500).is_err());
+    assert_eq!(store.labelled_messages(&ids, Some("123@lid"), "needle", 500, None).unwrap()[0].header.chat, chat);
+    assert_eq!(store.labelled_messages(&ids, None, "", 0, None).unwrap().len(), 1);
+    assert!(store.labelled_messages(&[], None, "", 500, None).is_err());
+    assert!(store.labelled_messages(&["".into()], None, "", 500, None).is_err());
+    assert!(store.labelled_messages(&vec!["a".into(); 51], None, "", 500, None).is_err());
     for index in 0..501 {
         store.set_message_label("a", chat, &format!("unlabeled-{index}"), true, 10).unwrap();
     }
-    assert_eq!(store.labelled_messages(&ids, None, "", 1000).unwrap().len(), 500);
+    assert_eq!(store.labelled_messages(&ids, None, "", 1000, None).unwrap().len(), 500);
+}
+
+#[test]
+fn labelled_message_chat_selection_applies_before_result_cap() {
+    let store = store();
+    store.set_label("a", Some("A"), None, Some(false), 1).unwrap();
+    let mut message = StoredMessage::default();
+    message.header.chat = "allowed@g.us".into();
+    message.header.id = "old".into();
+    message.header.timestamp = 1;
+    message.text = "target".into();
+    store.insert_message(&message).unwrap();
+    store.set_message_label("a", &message.header.chat, &message.header.id, true, 2).unwrap();
+    for index in 0..501 {
+        message.header.chat = "excluded@g.us".into();
+        message.header.id = format!("new-{index}");
+        message.header.timestamp = index + 2;
+        store.insert_message(&message).unwrap();
+        store.set_message_label("a", &message.header.chat, &message.header.id, true, 2).unwrap();
+    }
+    let labels = ["a".into()];
+    assert_eq!(store.labelled_messages(&labels, None, "target", 500, None).unwrap().len(), 500);
+    let allowed = ["allowed@g.us".into()];
+    let rows = store.labelled_messages(&labels, None, "target", 500, Some(&allowed)).unwrap();
+    assert_eq!(rows.iter().map(|row| row.header.id.as_str()).collect::<Vec<_>>(), ["old"]);
+    assert!(store.labelled_messages(&labels, None, "target", 500, Some(&[])).unwrap().is_empty());
+    assert!(store.labelled_messages(&labels, None, "target", 500, Some(&["".into()])).is_err());
+    assert!(store.labelled_messages(&labels, None, "target", 500, Some(&vec!["x@g.us".into(); 20_001])).is_err());
 }

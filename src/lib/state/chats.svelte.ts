@@ -18,6 +18,7 @@ import { members } from "./members.svelte";
 import { session } from "./session.svelte";
 import { ui } from "./ui.svelte";
 import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { uiError } from "./localized.ts";
 import { t } from "../i18n/localizer.ts";
 
 function bareJid(jid: string) {
@@ -187,10 +188,11 @@ export class ChatsState {
     finally { if (seq === this.pageSeq && scope === this.sidebarScope) this.sidebarLoading = false; }
   }
 
-  async allChats(): Promise<ChatSummary[]> {
+  async allChats(updateCache = true): Promise<ChatSummary[]> {
     const account = session.activeAccount;
-    const rows = await invoke<ChatSummary[]>("chats", { muteAllAtAll: session.settings.mute_all_at_all ?? false });
-    if (account === session.activeAccount) this.chats = mergeSummaries(this.chats, rows);
+    if (!account) throw uiError("error.not_connected");
+    const rows = await invoke<ChatSummary[]>("chats", { accountId: account, muteAllAtAll: session.settings.mute_all_at_all ?? false });
+    if (updateCache && account === session.activeAccount) this.chats = mergeSummaries(this.chats, rows);
     return rows;
   }
 
