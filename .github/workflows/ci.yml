@@ -159,7 +159,7 @@ jobs:
         run: node scripts/cargo.mjs llvm-cov --locked --manifest-path src-tauri/Cargo.toml --features wire-types
       - if: always() && runner.os == 'Linux'
         run: |
-          if node scripts/cargo.mjs llvm-cov report --manifest-path src-tauri/Cargo.toml --features wire-types --lcov --output-path src-tauri/target/tauri.lcov; then
+          if node scripts/cargo.mjs llvm-cov report --manifest-path src-tauri/Cargo.toml --lcov --output-path src-tauri/target/tauri.lcov; then
             if [ '${{ steps.tauri_coverage_test.outcome }}' != 'success' ]; then
               echo '_Partial Tauri coverage: tests did not pass._' >> "$GITHUB_STEP_SUMMARY"
             fi
