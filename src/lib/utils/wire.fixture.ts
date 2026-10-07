@@ -94,6 +94,8 @@ export const fixture = {
     "media_quality": "hd",
     "message_window_size": 150,
     "mute_all_at_all": false,
+    "notification_sound": "system",
+    "notification_sound_overrides": {},
     "notifications_enabled": true,
     "request_full_history": false,
     "retention": {

@@ -74,13 +74,24 @@ pub(crate) async fn mark_read_until(
     state: State<'_, AppState>,
     chat: String,
     id: String,
+    account: Option<String>,
 ) -> CommandResult<usize> {
-    let service = state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?;
+    let service = match account.as_deref() {
+        Some(account) => state.account_service(account)?,
+        None => state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?,
+    };
     let receipts = sends_privacy(&state, &service, &chat).await.1;
-    service
+    if let Some(account) = account.as_deref() {
+        if !std::sync::Arc::ptr_eq(&service, &state.account_service(account)?) { return Err(CommandError::code("error.account_changed")); }
+    }
+    let result = service
         .mark_read_until(&chat, &id, receipts)
         .await
-        .map_err(|e| { service.note_error(&e); CommandError::from(e) })
+        .map_err(|e| { service.note_error(&e); CommandError::from(e) });
+    if let Some(account) = account.as_deref() {
+        if !std::sync::Arc::ptr_eq(&service, &state.account_service(account)?) { return Err(CommandError::code("error.account_changed")); }
+    }
+    result
 }
 
 /// Sends a played receipt for a voice note or view-once media, unless receipts are off.

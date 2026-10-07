@@ -54,6 +54,7 @@
   import type { StickerLibrary, StickerResyncReport } from "$lib/utils/wire";
   import KeywordSettings from "$lib/settings/KeywordSettings.svelte";
   import NotificationHistory from "$lib/notifications/NotificationHistory.svelte";
+  import NotificationSoundPicker from "$lib/settings/NotificationSoundPicker.svelte";
   import SyncHealth from "./SyncHealth.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
   import PhoneLink from "$lib/settings/PhoneLink.svelte";
@@ -1139,6 +1140,13 @@
               {t("settings.main.notifications_pending")}
             {/if}
           </p>
+          <div class="setting stack" data-setting-search-id="notification-sound">
+            <NotificationSoundPicker
+              value={draft.notification_sound}
+              previewSound={draft.notification_sound}
+              onchange={(sound) => { if (sound) draft.notification_sound = sound; }} />
+            <p class="setting-desc">{t("settings.sound_global_hint")}</p>
+          </div>
           <label class="setting">
             <div>
               <span class="setting-title">{t("settings.main.mute_all")}</span>

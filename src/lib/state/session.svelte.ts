@@ -107,6 +107,8 @@ export class SessionState {
     keep_archived: true,
     android_instance: false,
     notifications_enabled: true,
+    notification_sound: "system",
+    notification_sound_overrides: {},
     mute_all_at_all: false,
     freeze_chat_list_on_hover: false,
     chat_preview: true,
@@ -235,6 +237,8 @@ export class SessionState {
 
   async loadSettings() {
     this.settings = await invoke<UiSettings>("get_settings");
+    this.settings.notification_sound ??= "system";
+    this.settings.notification_sound_overrides ??= {};
     // Off must behave as if every chat were muted, even when the backend
     // cannot persist the toggle: a stale backend drops the field, and a
     // fresh one defaults it on for older settings files. An explicit

@@ -44,6 +44,7 @@ export const SETTING_SEARCH_FIELDS: readonly SettingSearchDefinition[] = [
   { id: "spaces-export", section: "spaces", titleKey: "settings.main.export_metadata", descriptionKey: "settings.main.export_metadata_hint" },
   { id: "spaces-import", section: "spaces", titleKey: "settings.main.import_metadata", descriptionKey: "settings.main.import_metadata_hint" },
   { id: "notifications-enabled", section: "notifications", titleKey: "settings.main.enable_notifications", descriptionKey: "settings.main.enable_notifications_hint" },
+  { id: "notification-sound", section: "notifications", titleKey: "settings.sound_choice", descriptionKey: "settings.sound_global_hint" },
   { id: "sync-center", section: "sync", titleKey: "sync.title", descriptionKey: "sync.scope" },
   { id: "notifications-mute-all", section: "notifications", titleKey: "settings.main.mute_all", descriptionKey: "settings.main.mute_all_hint" },
   { id: "notifications-system", section: "notifications", titleKey: "settings.main.system_permission", descriptionKey: "settings.main.notifications_hint" },

@@ -64,6 +64,7 @@
     "allow-message-page",
     "allow-message-on-date",
     "allow-load-older-for-date",
+    "allow-preview-notification-sound",
     "allow-message-media-action",
     "allow-chats",
     "allow-chats-page",

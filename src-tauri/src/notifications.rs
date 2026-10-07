@@ -69,21 +69,37 @@ fn windows_app_id(app: &AppHandle) -> CommandResult<String> {
 }
 
 #[cfg(windows)]
+fn append_toast_action(
+    xml: &windows::Data::Xml::Dom::XmlDocument, actions: &windows::Data::Xml::Dom::IXmlNode,
+    id: &str, label: &str,
+) -> windows::core::Result<()> {
+    use windows::core::{h, HSTRING};
+    let action = xml.CreateElement(h!("action"))?;
+    action.SetAttribute(h!("arguments"), &HSTRING::from(id))?;
+    action.SetAttribute(h!("content"), &HSTRING::from(label))?;
+    action.SetAttribute(h!("activationType"), h!("foreground"))?;
+    actions.AppendChild(&action)?;
+    Ok(())
+}
+
+#[cfg(windows)]
 fn windows_notification(
-    title: &str, body: &str, muted: bool, action_label: &str, account_id: &str, chat: &str,
+    title: &str, body: &str, muted: bool, labels: &ActionLabels, account_id: &str, chat: &str,
 ) -> windows::core::Result<windows::UI::Notifications::ToastNotification> {
     use windows::core::{h, Interface, HSTRING};
-    use windows::Data::Xml::Dom::{XmlDocument, XmlElement};
+    use windows::Data::Xml::Dom::XmlDocument;
     use windows::Foundation::{DateTime, IReference, PropertyValue};
     use windows::UI::Notifications::ToastNotification;
 
     let xml = XmlDocument::new()?;
-    xml.LoadXml(h!("<toast duration=\"short\"><visual><binding template=\"ToastGeneric\"><text/><text/></binding></visual><actions><action arguments=\"open-chat\" activationType=\"foreground\"/></actions></toast>"))?;
+    xml.LoadXml(h!("<toast duration=\"short\"><visual><binding template=\"ToastGeneric\"><text/><text/></binding></visual><actions/></toast>"))?;
     let texts = xml.GetElementsByTagName(h!("text"))?;
     texts.Item(0)?.SetInnerText(&HSTRING::from(title))?;
     texts.Item(1)?.SetInnerText(&HSTRING::from(body))?;
-    let action: XmlElement = xml.GetElementsByTagName(h!("action"))?.Item(0)?.cast()?;
-    action.SetAttribute(h!("content"), &HSTRING::from(action_label))?;
+    let actions = xml.GetElementsByTagName(h!("actions"))?.Item(0)?;
+    append_toast_action(&xml, &actions, "open-chat", &labels.open)?;
+    if direct_chat(chat) { append_toast_action(&xml, &actions, "mark-read", &labels.mark_read)?; }
+    append_toast_action(&xml, &actions, "mute-chat", &labels.mute)?;
     if muted {
         let audio = xml.CreateElement(h!("audio"))?;
         audio.SetAttribute(h!("silent"), h!("true"))?;
@@ -104,13 +120,13 @@ fn windows_notification(
 #[cfg(windows)]
 fn show_windows_toast(
     app: &AppHandle, service: &Arc<WhatsAppService>, target: &DesktopChatTarget,
-    title: &str, body: &str, muted: bool, action_label: &str, app_id: &str,
+    title: &str, body: &str, muted: bool, labels: &ActionLabels, app_id: &str,
 ) -> windows::core::Result<(windows::UI::Notifications::ToastNotifier, windows::UI::Notifications::ToastNotification, u64)> {
     use windows::core::{Interface, HSTRING};
     use windows::Foundation::TypedEventHandler;
     use windows::UI::Notifications::{ToastActivatedEventArgs, ToastNotificationManager};
 
-    let toast = windows_notification(title, body, muted, action_label, &target.account_id, &target.chat)?;
+    let toast = windows_notification(title, body, muted, labels, &target.account_id, &target.chat)?;
     let generation = NEXT_WINDOWS_NOTIFICATION.fetch_add(1, Ordering::Relaxed);
     let key = (target.account_id.clone(), target.chat.clone());
     let callback_app = app.clone();
@@ -119,10 +135,10 @@ fn show_windows_toast(
     let handler: TypedEventHandler<windows::UI::Notifications::ToastNotification, windows::core::IInspectable> = TypedEventHandler::new(move |_, args: windows::core::Ref<'_, windows::core::IInspectable>| {
         let action = args.as_ref().and_then(|args| args.cast::<ToastActivatedEventArgs>().ok())
             .and_then(|args| args.Arguments().ok()).map(|value| value.to_string());
-        if !windows_opens_chat(action.as_deref()) { return Ok(()); }
+        let Some(action) = action_for_id(action.as_deref(), &callback_target.chat) else { return Ok(()); };
         let key = (callback_target.account_id.clone(), callback_target.chat.clone());
         if active_windows_notifications().lock().unwrap().get(&key).copied() != Some(generation) { return Ok(()); }
-        open_chat(&callback_app, &callback_target, &callback_service);
+        dispatch_action(&callback_app, &callback_target, &callback_service, action);
         Ok(())
     });
     toast.Activated(&handler)?;
@@ -140,15 +156,33 @@ pub struct DesktopChatTarget {
     pub chat: String,
 }
 
-#[cfg(any(not(windows), test))]
-fn opens_chat(response: &notify_rust::NotificationResponse) -> bool {
-    matches!(response, notify_rust::NotificationResponse::Default)
-        || matches!(response, notify_rust::NotificationResponse::Action(action) if action == "open-chat")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotificationAction { Open, MarkRead, Mute }
+
+struct ActionLabels { open: String, mark_read: String, mute: String }
+
+fn direct_chat(chat: &str) -> bool {
+    let Some((user, server)) = chat.split_once('@') else { return false; };
+    !user.is_empty() && user.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(server, "s.whatsapp.net" | "lid")
 }
 
-#[cfg(windows)]
-fn windows_opens_chat(action: Option<&str>) -> bool {
-    action.is_none_or(|action| action.is_empty() || action == "open-chat")
+fn action_for_id(id: Option<&str>, chat: &str) -> Option<NotificationAction> {
+    match id.unwrap_or("") {
+        "" | "default" | "open-chat" => Some(NotificationAction::Open),
+        "mark-read" if direct_chat(chat) => Some(NotificationAction::MarkRead),
+        "mute-chat" => Some(NotificationAction::Mute),
+        _ => None,
+    }
+}
+
+#[cfg(any(not(windows), test))]
+fn action_for_response(response: &notify_rust::NotificationResponse, chat: &str) -> Option<NotificationAction> {
+    match response {
+        notify_rust::NotificationResponse::Default => action_for_id(None, chat),
+        notify_rust::NotificationResponse::Action(id) => action_for_id(Some(id), chat),
+        _ => None,
+    }
 }
 
 fn current(state: &AppState, account_id: &str, service: &Arc<WhatsAppService>) -> CommandResult<()> {
@@ -167,6 +201,44 @@ fn open_chat(app: &AppHandle, target: &DesktopChatTarget, service_ref: &std::syn
     if let Err(error) = app.emit_to("main", "desktop-open-chat", target) {
         log::warn!("could not open notification chat: {error}");
     }
+}
+
+async fn execute_notification_action<M, MF, U, UF>(
+    action: NotificationAction, chat: &str, receipts: bool, mark_read: M, mute: U,
+) -> anyhow::Result<()>
+where
+    M: FnOnce(bool) -> MF, MF: std::future::Future<Output = anyhow::Result<usize>>,
+    U: FnOnce() -> UF, UF: std::future::Future<Output = anyhow::Result<()>>,
+{
+    match action {
+        NotificationAction::MarkRead if direct_chat(chat) => { mark_read(receipts).await?; Ok(()) }
+        NotificationAction::Mute => mute().await,
+        _ => Ok(()),
+    }
+}
+
+fn dispatch_action(
+    app: &AppHandle, target: &DesktopChatTarget, service_ref: &std::sync::Weak<WhatsAppService>,
+    action: NotificationAction,
+) {
+    if action == NotificationAction::Open { open_chat(app, target, service_ref); return; }
+    if action == NotificationAction::MarkRead && !direct_chat(&target.chat) { return; }
+    let Some(service) = service_ref.upgrade() else { return; };
+    if current(&app.state::<AppState>(), &target.account_id, &service).is_err() { return; }
+    let app = app.clone();
+    let target = target.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        if current(&state, &target.account_id, &service).is_err() { return; }
+        let receipts = if action == NotificationAction::MarkRead {
+            let receipts = crate::settings::sends_privacy(&state, &service, &target.chat).await.1;
+            if current(&state, &target.account_id, &service).is_err() { return; }
+            receipts
+        } else { false };
+        let result = execute_notification_action(action, &target.chat, receipts,
+            |send| service.mark_read(&target.chat, send), || service.set_muted(&target.chat, -1)).await;
+        if let Err(error) = result { log::warn!("notification action failed for {}: {error}", target.chat); }
+    });
 }
 
 #[tauri::command]
@@ -189,16 +261,22 @@ pub(crate) async fn set_chat_sound_muted(
 }
 
 #[cfg(not(windows))]
-fn notification(title: &str, body: &str, muted: bool, action_label: &str, replacement_id: Option<u32>) -> notify_rust::Notification {
+fn notification(title: &str, body: &str, muted: bool, labels: &ActionLabels, chat: &str, replacement_id: Option<u32>) -> notify_rust::Notification {
     let mut note = notify_rust::Notification::new();
-    note.summary(title).body(body).auto_icon().action("open-chat", action_label)
+    note.summary(title).body(body).auto_icon().action("open-chat", &labels.open)
         .timeout(notify_rust::Timeout::Milliseconds(NOTIFICATION_TIMEOUT_MS));
     #[cfg(all(unix, not(target_os = "macos")))]
     if let Some(id) = replacement_id { note.id(id); }
     #[cfg(target_os = "macos")]
     let _ = replacement_id;
     #[cfg(all(unix, not(target_os = "macos")))]
-    note.action("default", action_label);
+    {
+        note.action("default", &labels.open);
+        if direct_chat(chat) { note.action("mark-read", &labels.mark_read); }
+        note.action("mute-chat", &labels.mute);
+    }
+    #[cfg(target_os = "macos")]
+    let _ = chat;
     #[cfg(all(unix, not(target_os = "macos")))]
     if muted {
         note.hint(notify_rust::Hint::SuppressSound(true));
@@ -208,23 +286,86 @@ fn notification(title: &str, body: &str, muted: bool, action_label: &str, replac
     note
 }
 
+fn native_audio_plan(
+    chat_muted: bool, preset: crate::settings::NotificationSound,
+) -> (bool, Option<crate::settings::NotificationSound>) {
+    let custom = preset != crate::settings::NotificationSound::System;
+    (chat_muted || custom, (!chat_muted && custom).then_some(preset))
+}
+
+fn mute_active(until: i64, now: i64) -> bool { until < 0 || until > now }
+
+fn chat_notifications_muted(service: &WhatsAppService, chat: &str) -> CommandResult<bool> {
+    let until = tauri::async_runtime::block_on(service.muted_until(chat)).map_err(CommandError::from)?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    Ok(mute_active(until, now))
+}
+
+async fn native_audio_selection(
+    state: &AppState, service: &WhatsAppService, account_id: &str, chat: &str,
+) -> CommandResult<(bool, Option<crate::settings::NotificationSound>)> {
+    let chat_muted = service.chat_sound_muted(chat).await.map_err(CommandError::from)?.unwrap_or(false);
+    Ok({
+        let settings = state.settings.lock().unwrap();
+        let preset = *crate::settings::notification_sound_for(&settings, account_id, chat);
+        native_audio_plan(chat_muted, preset)
+    })
+}
+
+async fn notification_presentation(
+    app: &AppHandle, state: &AppState, service: &WhatsAppService, account_id: &str, chat: &str,
+) -> CommandResult<(bool, Option<crate::settings::NotificationSound>, ActionLabels)> {
+    let (muted, custom_sound) = native_audio_selection(state, service, account_id, chat).await?;
+    let labels = ActionLabels {
+        open: crate::native_locale::text(app, "native.open_chat"),
+        mark_read: crate::native_locale::text(app, "chat.mark_read"),
+        mute: crate::native_locale::text(app, "chat.mute"),
+    };
+    Ok((muted, custom_sound, labels))
+}
+
+fn playback_sound(
+    app: &AppHandle, service: &Arc<WhatsAppService>, target: &DesktopChatTarget,
+    expected: Option<crate::settings::NotificationSound>,
+) -> Option<crate::settings::NotificationSound> {
+    let expected = expected?;
+    let state = app.state::<AppState>();
+    if current(&state, &target.account_id, service).is_err() || !state.settings.lock().unwrap().notifications_enabled { return None; }
+    if chat_notifications_muted(service, &target.chat).ok()? { return None; }
+    let sound = tauri::async_runtime::block_on(native_audio_selection(&state, service, &target.account_id, &target.chat))
+        .map(|(_, sound)| sound).unwrap_or(None);
+    if current(&state, &target.account_id, service).is_err() || !state.settings.lock().unwrap().notifications_enabled { return None; }
+    (sound == Some(expected)).then_some(expected)
+}
+
+fn prepare_notification(
+    app: &AppHandle, service: &Arc<WhatsAppService>, target: &DesktopChatTarget,
+) -> CommandResult<Option<(bool, Option<crate::settings::NotificationSound>, ActionLabels)>> {
+    let state = app.state::<AppState>();
+    current(&state, &target.account_id, service)?;
+    if !state.settings.lock().unwrap().notifications_enabled { return Ok(None); }
+    if chat_notifications_muted(service, &target.chat)? { return Ok(None); }
+    let presentation = tauri::async_runtime::block_on(notification_presentation(
+        app, &state, service, &target.account_id, &target.chat,
+    ))?;
+    current(&state, &target.account_id, service)?;
+    if !state.settings.lock().unwrap().notifications_enabled { return Ok(None); }
+    Ok(Some(presentation))
+}
+
 #[tauri::command]
 pub(crate) async fn show_chat_notification(
     app: AppHandle, state: State<'_, AppState>, account_id: String, chat: String,
     title: String, body: String,
-) -> CommandResult<()> {
+) -> CommandResult<Option<crate::settings::NotificationSound>> {
     let service = state.service_for_account(&account_id)?;
-    let muted = service.chat_sound_muted(&chat).await.map_err(CommandError::from)?.unwrap_or(false);
-    let action_label = crate::native_locale::text(&app, "native.open_chat");
-    #[cfg(not(windows))]
-    let note = notification(&title, &body, muted, &action_label, None);
     #[cfg(windows)]
     let app_id = windows_app_id(&app)?;
     #[cfg(target_os = "macos")]
     let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
     current(&state, &account_id, &service)?;
     if !state.settings.lock().unwrap().notifications_enabled {
-        return Ok(());
+        return Ok(None);
     }
     let service_ref = Arc::downgrade(&service);
     drop(service);
@@ -232,19 +373,20 @@ pub(crate) async fn show_chat_notification(
     let (shown, result) = tokio::sync::oneshot::channel();
     tauri::async_runtime::spawn_blocking(move || {
         let Some(service) = service_ref.upgrade() else { let _ = shown.send(Err(CommandError::code("error.account_changed"))); return; };
-        if let Err(error) = current(&app.state::<AppState>(), &target.account_id, &service) {
-            let _ = shown.send(Err(error)); return;
-        }
-        if !app.state::<AppState>().settings.lock().unwrap().notifications_enabled {
-            let _ = shown.send(Ok(())); return;
-        }
+        let (muted, custom_sound, labels) = match prepare_notification(&app, &service, &target) {
+            Ok(Some(value)) => value,
+            Ok(None) => { let _ = shown.send(Ok(None)); return; }
+            Err(error) => { let _ = shown.send(Err(error)); return; }
+        };
+        #[cfg(not(windows))]
+        let note = notification(&title, &body, muted, &labels, &target.chat, None);
         #[cfg(windows)]
         {
-            let (notifier, toast, generation) = match show_windows_toast(&app, &service, &target, &title, &body, muted, &action_label, &app_id) {
+            let (notifier, toast, generation) = match show_windows_toast(&app, &service, &target, &title, &body, muted, &labels, &app_id) {
                 Ok(value) => value,
                 Err(error) => { let _ = shown.send(Err(CommandError::operation_failed(error))); return; }
             };
-            let _ = shown.send(Ok(()));
+            let _ = shown.send(Ok(playback_sound(&app, &service, &target, custom_sound)));
             drop(service);
             std::thread::sleep(std::time::Duration::from_millis(NOTIFICATION_TIMEOUT_MS as u64));
             let key = (target.account_id, target.chat);
@@ -269,14 +411,14 @@ pub(crate) async fn show_chat_notification(
             Ok(handle) => handle,
             Err(error) => { let _ = shown.send(Err(CommandError::operation_failed(error))); return; }
         };
-        let _ = shown.send(Ok(()));
+        let _ = shown.send(Ok(playback_sound(&app, &service, &target, custom_sound)));
         let service_ref = Arc::downgrade(&service);
         drop(service);
         if let Err(error) = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
-            if !opens_chat(response) { return; }
+            let Some(action) = action_for_response(response, &target.chat) else { return; };
             #[cfg(all(unix, not(target_os = "macos")))]
             if active_notifications().lock().unwrap().get(&key).map(|(_, current)| *current) != Some(generation) { return; }
-            open_chat(&app, &target, &service_ref);
+            dispatch_action(&app, &target, &service_ref, action);
         }) {
             log::warn!("could not listen for notification action: {error}");
         }
@@ -294,19 +436,37 @@ pub(crate) async fn show_chat_notification(
 mod tests {
     use super::*;
 
+    #[test]
+    fn chat_mute_deadlines_suppress_pending_notifications() {
+        assert!(mute_active(-1, 100));
+        assert!(mute_active(101, 100));
+        assert!(!mute_active(100, 100));
+        assert!(!mute_active(0, 100));
+    }
+
+    fn labels() -> ActionLabels {
+        ActionLabels { open: "Open chat".into(), mark_read: "Mark read".into(), mute: "Mute chat".into() }
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn sound_muting_keeps_visual_content_and_normal_defaults() {
-        let normal = notification("Synthetic title", "Synthetic body", false, "Synthetic localized action", None);
-        let muted = notification("Synthetic title", "Synthetic body", true, "Synthetic localized action", None);
+        let labels = labels();
+        let normal = notification("Synthetic title", "Synthetic body", false, &labels, "123@s.whatsapp.net", None);
+        let muted = notification("Synthetic title", "Synthetic body", true, &labels, "123@s.whatsapp.net", None);
         assert_eq!(normal.summary, "Synthetic title");
         assert_eq!(normal.body, "Synthetic body");
         assert_eq!(normal.summary, muted.summary);
         assert_eq!(normal.body, muted.body);
         assert_eq!(normal.timeout, notify_rust::Timeout::Milliseconds(NOTIFICATION_TIMEOUT_MS));
-        assert!(format!("{normal:?}").contains("Synthetic localized action"));
+        assert!(format!("{normal:?}").contains("Open chat"));
         #[cfg(all(unix, not(target_os = "macos")))]
         {
+            assert!(normal.actions.contains(&"mark-read".to_owned()));
+            assert!(normal.actions.contains(&"mute-chat".to_owned()));
+            let group = notification("Group", "Body", false, &labels, "123@g.us", None);
+            assert!(!group.actions.contains(&"mark-read".to_owned()));
+            assert!(group.actions.contains(&"mute-chat".to_owned()));
             assert!(!normal.hints.contains(&notify_rust::Hint::SuppressSound(true)));
             assert!(muted.hints.contains(&notify_rust::Hint::SuppressSound(true)));
         }
@@ -317,10 +477,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_builder_tags_chat_and_sets_expiry() {
-        let a = windows_notification("Alice & Bob", "A < B", false, "Open chat", "account", "chat").unwrap();
-        let repeat = windows_notification("Updated", "Body", true, "Open chat", "account", "chat").unwrap();
-        let other_chat = windows_notification("Other", "Body", false, "Open chat", "account", "other").unwrap();
-        let other_account = windows_notification("Other", "Body", false, "Open chat", "other", "chat").unwrap();
+        let labels = labels();
+        let a = windows_notification("Alice & Bob", "A < B", false, &labels, "account", "123@s.whatsapp.net").unwrap();
+        let repeat = windows_notification("Updated", "Body", true, &labels, "account", "123@s.whatsapp.net").unwrap();
+        let other_chat = windows_notification("Other", "Body", false, &labels, "account", "456@s.whatsapp.net").unwrap();
+        let other_account = windows_notification("Other", "Body", false, &labels, "other", "123@s.whatsapp.net").unwrap();
         assert_eq!(a.Tag().unwrap(), repeat.Tag().unwrap());
         assert_eq!(a.Group().unwrap(), repeat.Group().unwrap());
         assert_ne!(a.Tag().unwrap(), other_chat.Tag().unwrap());
@@ -334,11 +495,17 @@ mod tests {
         assert!(xml.contains("Alice &amp; Bob"));
         assert!(xml.contains("A &lt; B"));
         assert!(xml.contains("open-chat"));
+        assert!(xml.contains("mark-read"));
+        assert!(xml.contains("mute-chat"));
+        let group = windows_notification("Group", "Body", false, &labels, "account", "123@g.us").unwrap();
+        let group_xml = group.Content().unwrap().GetXml().unwrap().to_string();
+        assert!(!group_xml.contains("mark-read"));
+        assert!(group_xml.contains("mute-chat"));
         let muted_xml = repeat.Content().unwrap().GetXml().unwrap().to_string();
         assert!(muted_xml.contains("silent=\"true\""));
-        assert!(windows_opens_chat(None));
-        assert!(windows_opens_chat(Some("open-chat")));
-        assert!(!windows_opens_chat(Some("unrelated")));
+        assert_eq!(action_for_id(None, "123@s.whatsapp.net"), Some(NotificationAction::Open));
+        assert_eq!(action_for_id(Some("mark-read"), "123@s.whatsapp.net"), Some(NotificationAction::MarkRead));
+        assert_eq!(action_for_id(Some("mark-read"), "123@g.us"), None);
     }
 
     #[cfg(windows)]
@@ -375,12 +542,13 @@ mod tests {
         let account = format!("{unique}-account");
         let chat = format!("{unique}-chat");
         let app_id = HSTRING::from(DEV_TOAST_APP_ID);
+        let labels = labels();
         let notifier = ToastNotificationManager::CreateToastNotifierWithId(&app_id).unwrap();
         let mut cleanup = Cleanup { notifier, app_id, tag: HSTRING::from(toast_key(&chat)),
             group: HSTRING::from(toast_key(&account)), toasts: Vec::new() };
         for number in 1..=3 {
             let toast = windows_notification("Postal notification smoke", &format!("Synthetic message {number}"),
-                true, "Open chat", &account, &chat).unwrap();
+                true, &labels, &account, &chat).unwrap();
             cleanup.notifier.Show(&toast).unwrap();
             cleanup.toasts.push(toast);
         }
@@ -404,7 +572,7 @@ mod tests {
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn replacement_id_is_set_for_xdg() {
-        let note = notification("Title", "Body", false, "Open", Some(42));
+        let note = notification("Title", "Body", false, &labels(), "123@s.whatsapp.net", Some(42));
         assert!(format!("{note:?}").contains("id: Some(42)"));
         assert_eq!(note.timeout, notify_rust::Timeout::Milliseconds(NOTIFICATION_TIMEOUT_MS));
     }
@@ -412,12 +580,43 @@ mod tests {
     #[test]
     fn desktop_notification_clicks_only_open_matching_actions() {
         use notify_rust::{CloseReason, NotificationResponse};
-        assert!(opens_chat(&NotificationResponse::Default));
-        assert!(opens_chat(&NotificationResponse::Action("open-chat".into())));
-        assert!(!opens_chat(&NotificationResponse::Action("unrelated".into())));
-        assert!(!opens_chat(&NotificationResponse::Closed(CloseReason::Dismissed)));
-        assert!(!opens_chat(&NotificationResponse::Reply("open-chat".into())));
+        assert_eq!(action_for_response(&NotificationResponse::Default, "123@s.whatsapp.net"), Some(NotificationAction::Open));
+        assert_eq!(action_for_response(&NotificationResponse::Action("open-chat".into()), "123@s.whatsapp.net"), Some(NotificationAction::Open));
+        assert_eq!(action_for_response(&NotificationResponse::Action("mark-read".into()), "123@s.whatsapp.net"), Some(NotificationAction::MarkRead));
+        assert_eq!(action_for_response(&NotificationResponse::Action("mark-read".into()), "123@g.us"), None);
+        assert_eq!(action_for_response(&NotificationResponse::Action("mute-chat".into()), "123@g.us"), Some(NotificationAction::Mute));
+        assert_eq!(action_for_response(&NotificationResponse::Action("unrelated".into()), "123@s.whatsapp.net"), None);
+        assert_eq!(action_for_response(&NotificationResponse::Closed(CloseReason::Dismissed), "123@s.whatsapp.net"), None);
+        assert_eq!(action_for_response(&NotificationResponse::Reply("open-chat".into()), "123@s.whatsapp.net"), None);
         let target = DesktopChatTarget { account_id: "synthetic-account".into(), chat: "synthetic-chat".into() };
         assert_eq!(serde_json::to_value(target).unwrap(), serde_json::json!({"account_id":"synthetic-account", "chat":"synthetic-chat"}));
+    }
+
+    #[test]
+    fn notification_actions_forward_privacy_and_skip_non_direct_read() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        tauri::async_runtime::block_on(async {
+            for (action, chat, receipts) in [
+                (NotificationAction::MarkRead, "123@s.whatsapp.net", false),
+                (NotificationAction::MarkRead, "456@lid", true),
+                (NotificationAction::MarkRead, "123@g.us", true),
+                (NotificationAction::Mute, "123@g.us", false),
+            ] {
+                execute_notification_action(action, chat, receipts,
+                    |send| { calls.borrow_mut().push(format!("read:{send}")); async { Ok(1) } },
+                    || { calls.borrow_mut().push("mute".to_owned()); async { Ok(()) } },
+                ).await.unwrap();
+            }
+        });
+        assert_eq!(*calls.borrow(), ["read:false", "read:true", "mute"]);
+    }
+
+    #[test]
+    fn native_sound_respects_mute_and_system_preset() {
+        use crate::settings::NotificationSound::{Chime, System};
+        assert_eq!(native_audio_plan(false, System), (false, None));
+        assert_eq!(native_audio_plan(true, System), (true, None));
+        assert_eq!(native_audio_plan(false, Chime), (true, Some(Chime)));
+        assert_eq!(native_audio_plan(true, Chime), (true, None));
     }
 }

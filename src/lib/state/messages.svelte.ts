@@ -709,6 +709,8 @@ export class MessagesState {
   prepareChat(chat: string, limit = DEFAULT_MESSAGE_WINDOW) {
     this.channelOlderRequest++;
     this.dateSeekSeq++;
+    clearTimeout(this.readMarkTimer);
+    this.lastMarkedId = null;
     this.chat = chat;
     this.messageLimit = limit;
     this.window = new MessageWindow(limit);
@@ -738,6 +740,8 @@ export class MessagesState {
   resetAccount() {
     this.channelOlderRequest++;
     this.dateSeekSeq++;
+    clearTimeout(this.readMarkTimer);
+    this.lastMarkedId = null;
     this.accountSeq++;
     this.chat = null;
     this.refreshPending = false;

@@ -289,6 +289,7 @@ export type MessageRef = { code: string, params: { [key in string]: MessageParam
 export type MessageStoreHealth = { status: MessageStoreStatus, path: string | null, diagnosis: string | null, };
 export type MessageStoreRecovery = { preserved_directory: string, restart_diagnostic: string | null, };
 export type MessageStoreStatus = "disabled" | "missing" | "healthy" | "corrupt";
+export type NotificationSound = "system" | "chime" | "pop" | "soft";
 export type OnceState = {
 /**
  * Whether a device was ever linked; survives the instance being stopped.
@@ -623,7 +624,7 @@ android_instance: boolean,
  * Global kill switch for desktop notifications. Muted chats never
  * notify, whatever this is set to.
  */
-notifications_enabled: boolean,
+notifications_enabled: boolean, notification_sound: NotificationSound, notification_sound_overrides: { [key in string]: { [key in string]: NotificationSound } },
 /**
  * Mutes @all mentions in every chat. Direct mentions still ping.
  * Per-chat mutes keep working underneath; the muted-chats list hides

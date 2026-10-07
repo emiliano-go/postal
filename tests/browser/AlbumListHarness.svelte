@@ -213,7 +213,7 @@
         assert(!scroller!.querySelector('.album-anchor[data-id="parent"]') && frontier() !== "parent", "evicted parent never creates a synthetic read marker");
         checks.push("late/interleaved envelope chronology, non-monotone column raw frontier, partial paging and no synthetic mark-read success");
 
-        const ordinary = Array.from({ length: 90 }, (_, index) => row(`rail-${index}`, null, { media_kind: null, timestamp: 20 + index, text: `Synthetic rail ${index}. ${"bodyword".repeat(8)}` }));
+        const ordinary = Array.from({ length: 400 }, (_, index) => row(`rail-${index}`, null, { media_kind: null, timestamp: 20 + index, text: `Synthetic rail ${index}. ${"bodyword".repeat(8)}` }));
         frameHeight = 380;
         const virtualParent = { ...parent, timestamp: 1000 };
         const virtualChildren = children.map((message, index) => ({ ...message, timestamp: 1001 + index }));
@@ -224,6 +224,17 @@
         assert(!rail!.hasMessage("unknown") && !rail!.revealMessage("unknown"), "virtual lookup rejects unknown IDs");
         assert(rail!.revealMessage("rail-0"), "virtual reveal accepts offscreen ordinary row");
         await until(() => inView("rail-0"), "offscreen ordinary row did not mount into viewport");
+        await replace(ordinary);
+        assert(rail!.revealMessage("rail-199"), "partial scroll accepts middle message");
+        await until(() => inView("rail-199"), "middle message did not enter viewport");
+        const partialFrontier = frontier();
+        assert(partialFrontier?.startsWith("rail-") && Number(partialFrontier.slice(5)) >= 199
+          && Number(partialFrontier.slice(5)) < 399, "partial scroll keeps below-fold messages unread");
+        assert(rail!.revealMessage("rail-399"), "fast fling accepts last ordinary message");
+        await until(() => inView("rail-399"), "last ordinary message did not enter viewport");
+        assert(frontier() === "rail-399", "fast fling spans unmounted rows through last visible ordinary message");
+        checks.push("400-row rapid/partial scrolling advances contiguous read frontier without marking below fold");
+        await replace([...ordinary, virtualParent, ...virtualChildren]);
         assert(rail!.revealMessage("child-0"), "virtual reveal accepts first child in tall album group");
         await until(() => inView("child-0"), "first child in tall album group remained offscreen");
         assert(rail!.revealMessage("parent"), "virtual reveal accepts loaded parent marker");

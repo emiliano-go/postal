@@ -907,13 +907,16 @@
   /** Advances the read marker through the newest visible message, throttled. */
   function scheduleReadMarking() {
     clearTimeout(messages.readMarkTimer);
+    const chat = chats.selectedChat, account = session.activeAccount, generation = messages.accountGeneration;
+    if (!chat || !account) return;
+    const current = () => chat === chats.selectedChat && account === session.activeAccount
+      && generation === messages.accountGeneration;
     messages.readMarkTimer = setTimeout(() => {
-      if (!scroller || !chats.selectedChat) return;
-      const chat = chats.selectedChat;
+      if (!scroller || !current()) return;
       const ids = messages.ordered;
       const visible = messageList?.visibleReadIds() ?? [];
       const candidate = visibleReadFrontier(ids, visible);
-      visibleBoundary = { chat, id: candidate, account: session.activeAccount, generation: messages.accountGeneration };
+      visibleBoundary = { chat, id: candidate, account, generation };
       if (!document.hasFocus()) return;
       if (!candidate || candidate === messages.lastMarkedId) return;
       messages.lastMarkedId = candidate;
@@ -926,8 +929,9 @@
         : -1;
       const targetIdx = lastIdx >= 0 ? lastIdx : firstIdx;
       const markedIdx = ids.findIndex((m) => m.id === candidate);
-      invoke<number>("mark_read_until", { chat, id: candidate })
+      invoke<number>("mark_read_until", { account, chat, id: candidate })
         .then((changed) => {
+          if (!current()) return;
           if (changed > 0) queueRefreshChats();
           // The divider stays until the newest unread is read too, so it does
           // not vanish the moment the first unread scrolls into view.
@@ -936,7 +940,9 @@
             messages.lastUnreadId = null;
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (current() && messages.lastMarkedId === candidate) messages.lastMarkedId = null;
+        });
     }, 200);
   }
 

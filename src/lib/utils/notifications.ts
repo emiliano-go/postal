@@ -5,6 +5,8 @@ import { plain } from "./format.ts";
 import { MEDIA_LABELS, captionOf } from "./message.ts";
 import type { StoredMessage } from "./models.ts";
 import { t } from "../i18n/localizer.ts";
+import { playNotificationSound } from "./notification-sound.ts";
+import type { NotificationSound } from "./wire.ts";
 
 /**
  * How old a message may be and still ping. `fresh` only means "arrival-shaped";
@@ -137,25 +139,33 @@ export async function requestNotificationPermission(): Promise<NotifPermission> 
 /** Shows one desktop notification. No-ops without permission. Never throws. */
 export async function showChatNotification(
   title: string, body: string, chat: string, accountId: string, current: () => boolean,
+  fallbackSound: () => NotificationSound = () => "system",
 ): Promise<void> {
   if (typeof window === "undefined" || !current()) return;
   try {
     if (!(await isPermissionGranted())) return;
     if (!current()) return;
-    await invoke("show_chat_notification", { accountId, chat, title, body });
+    const sound = await invoke<NotificationSound | null>("show_chat_notification", { accountId, chat, title, body });
+    if (!current()) return;
+    if (sound) {
+      try { await playNotificationSound(sound, current); } catch {}
+    }
   } catch {
     // Outside Tauri (synthetic browser harness): best-effort Web API fallback.
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    let muted = false;
+    let muted: boolean | undefined;
     try { muted = (await invoke<boolean | null>("chat_sound_muted", { accountId, chat })) ?? false; } catch {}
-    if (!current()) return;
+    if (!current() || muted === undefined) return;
     try {
-      const note = new Notification(title, { body, tag: `postal-${chat}`, silent: muted });
+      const sound = fallbackSound();
+      if (!current()) return;
+      const note = new Notification(title, { body, tag: `postal-${chat}`, silent: muted || sound !== "system" });
       note.onclick = () => {
         if (!current()) return;
         window.focus();
         window.dispatchEvent(new CustomEvent("postal:open-chat", { detail: { account_id: accountId, chat } }));
       };
+      if (!muted && sound !== "system") await playNotificationSound(sound, current);
     } catch {
       // Notifications are best-effort; the chat list already shows the message.
     }

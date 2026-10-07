@@ -263,6 +263,7 @@ async function notifyForMessage(message: StoredMessage, fresh: boolean, mute?: {
     chat,
     account,
     current,
+    () => session.settings.notification_sound_overrides?.[account]?.[chat] ?? session.settings.notification_sound,
   );
 }
 
@@ -306,7 +307,8 @@ async function notifyForHint(chat: string, id: string, fresh: boolean, scope = n
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
   showChatNotification(chatName, isGroup ? t("state.new_message") : t("state.new_message_from", { name: chatName }), chat, account,
-    () => scopeCurrent(scope) && notificationsOn() && !isOpenChat(chat) && !isChatMuted(currentMute.mutedUntil));
+    () => scopeCurrent(scope) && notificationsOn() && !isOpenChat(chat) && !isChatMuted(currentMute.mutedUntil),
+    () => session.settings.notification_sound_overrides?.[account]?.[chat] ?? session.settings.notification_sound);
 }
 
 const notificationQueues = new Map<string, Promise<void>>();

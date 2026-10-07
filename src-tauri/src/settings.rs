@@ -1,8 +1,21 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use postal_core::{DiskRetention, WhatsAppService};
 use postal_core::store::RetentionLimit;
 use tauri::{AppHandle, Manager, State};
 use crate::AppState;
+
+#[tauri::command]
+pub(crate) fn preview_notification_sound() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT, SND_NOSTOP, SND_SYSTEM};
+        unsafe { PlaySoundW(windows_sys::core::w!("Notification.Default"), std::ptr::null_mut(),
+            SND_ALIAS | SND_ASYNC | SND_NODEFAULT | SND_NOSTOP | SND_SYSTEM) != 0 }
+    }
+    #[cfg(not(windows))]
+    false
+}
 
 /// Settings the UI can change.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -62,6 +75,10 @@ pub struct UiSettings {
     /// notify, whatever this is set to.
     #[serde(default = "default_true")]
     pub notifications_enabled: bool,
+    #[serde(default)]
+    pub notification_sound: NotificationSound,
+    #[serde(default)]
+    pub notification_sound_overrides: BTreeMap<String, BTreeMap<String, NotificationSound>>,
     /// Mutes @all mentions in every chat. Direct mentions still ping.
     /// Per-chat mutes keep working underneath; the muted-chats list hides
     /// while this is on.
@@ -84,6 +101,26 @@ pub struct UiSettings {
     /// link is diagnosable. Applies the next time Postal starts.
     #[serde(default = "default_true")]
     pub verbose_whatsapp_logs: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+pub enum NotificationSound {
+    System,
+    Chime,
+    Pop,
+    Soft,
+}
+
+impl Default for NotificationSound {
+    fn default() -> Self { Self::System }
+}
+
+pub(crate) fn notification_sound_for<'a>(settings: &'a UiSettings, account_id: &str, chat: &str) -> &'a NotificationSound {
+    settings.notification_sound_overrides.get(account_id)
+        .and_then(|chats| chats.get(chat))
+        .unwrap_or(&settings.notification_sound)
 }
 
 pub(crate) fn default_true() -> bool {
@@ -116,6 +153,8 @@ impl Default for UiSettings {
             keep_archived: true,
             android_instance: false,
             notifications_enabled: true,
+            notification_sound: NotificationSound::System,
+            notification_sound_overrides: BTreeMap::new(),
             mute_all_at_all: false,
             freeze_chat_list_on_hover: false,
             chat_preview: true,
@@ -274,6 +313,28 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "plays the configured Windows notification sound"]
+    fn system_sound_preview_uses_native_audio_without_notification() {
+        assert!(preview_notification_sound(), "Windows refused the configured notification sound");
+    }
+
+    #[test]
+    fn notification_sounds_default_validate_and_persist_chat_overrides() {
+        let defaults = parse_settings("{}").unwrap();
+        assert_eq!(defaults.notification_sound, NotificationSound::System);
+        assert!(defaults.notification_sound_overrides.is_empty());
+
+        let mut settings = parse_settings(r#"{"notification_sound":"chime","notification_sound_overrides":{"account":{"chat@s":"soft"}}}"#).unwrap();
+        assert_eq!(*notification_sound_for(&settings, "account", "chat@s"), NotificationSound::Soft);
+        assert_eq!(*notification_sound_for(&settings, "account", "other@s"), NotificationSound::Chime);
+        settings.notification_sound_overrides.get_mut("account").unwrap().remove("chat@s");
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert_eq!(parse_settings(&saved).unwrap().notification_sound, NotificationSound::Chime);
+        assert!(parse_settings(r#"{"notification_sound":"loud"}"#).is_err());
+    }
 
     #[test]
     fn media_policy_migrates_legacy_choices_and_preserves_partial_types() {

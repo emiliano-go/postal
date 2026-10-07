@@ -199,6 +199,7 @@ impl WhatsAppService {
         let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
         let jid: Jid = key.parse()?;
         self.store.set_muted_until(&key, until).await?;
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: key.clone() });
         let actions = self.client.chat_actions();
         let result = match until {
             0 => actions.unmute_chat(&jid).await,

@@ -12,6 +12,7 @@ test("notification delivery stays account-bound through permission and sound awa
   const compiled = js.replace(/^import .*;$/gm, "").replace(/^export /gm, "");
   const calls: { command: string; args: unknown }[] = [];
   const shown: { title: string; options: unknown }[] = [];
+  const played: string[] = [];
   let permission: () => Promise<boolean> = async () => true;
   let invokeImpl: (command: string, args: unknown) => unknown = async () => undefined;
   class FakeNotification {
@@ -28,18 +29,21 @@ test("notification delivery stays account-bound through permission and sound awa
   const windowStub = { focus() {}, dispatchEvent() {} };
   const exports = new Function(
     "isPermissionGranted", "requestPermission", "sendNotification", "invoke", "plain",
-    "MEDIA_LABELS", "captionOf", "Notification", "window", "CustomEvent", "t",
+    "MEDIA_LABELS", "captionOf", "Notification", "window", "CustomEvent", "t", "playNotificationSound",
     `${compiled}\nreturn { showChatNotification };`,
   )(
     () => permission(), async () => true, async () => {},
     (command: string, args: unknown) => { calls.push({ command, args }); return invokeImpl(command, args); },
     (text: string) => text, {}, () => "", FakeNotification, windowStub, class {}, t,
-  ) as { showChatNotification: (title: string, body: string, chat: string, accountId: string, current: () => boolean) => Promise<void> };
+    async (sound: string, current: () => boolean) => { if (current()) played.push(sound); return current(); },
+  ) as { showChatNotification: (title: string, body: string, chat: string, accountId: string, current: () => boolean, fallbackSound?: () => string) => Promise<void> };
 
   let current = true;
+  let fallbackSound = "chime";
+  const notify = (title = "Title", body = "Body") => exports.showChatNotification(title, body, "chat", "account-a", () => current, () => fallbackSound);
   let resolvePermission!: (granted: boolean) => void;
   permission = () => new Promise((resolve) => { resolvePermission = resolve; });
-  const staleNative = exports.showChatNotification("Title", "Body", "chat", "account-a", () => current);
+  const staleNative = notify();
   current = false;
   resolvePermission(true);
   await staleNative;
@@ -48,26 +52,53 @@ test("notification delivery stays account-bound through permission and sound awa
   current = true;
   permission = async () => true;
   invokeImpl = async () => undefined;
-  await exports.showChatNotification("Title", "Body", "chat", "account-a", () => current);
+  await notify();
   assert.deepEqual(calls, [{
     command: "show_chat_notification",
     args: { accountId: "account-a", chat: "chat", title: "Title", body: "Body" },
   }]);
+  assert.deepEqual(played, []);
+
+  invokeImpl = async (command) => command === "show_chat_notification" ? "chime" : undefined;
+  await notify();
+  assert.deepEqual(played, ["chime"]);
+
+  invokeImpl = async (command) => command === "show_chat_notification" ? null : undefined;
+  await notify();
+  assert.deepEqual(played, ["chime"]);
 
   invokeImpl = async (command) => {
     if (command === "show_chat_notification") throw new Error("native unavailable");
     return true;
   };
-  await exports.showChatNotification("Title", "Body", "chat", "account-a", () => current);
+  await notify();
   assert.deepEqual(shown[0], { title: "Title", options: { body: "Body", tag: "postal-chat", silent: true } });
   assert.deepEqual(calls.slice(-1)[0], { command: "chat_sound_muted", args: { accountId: "account-a", chat: "chat" } });
+  assert.deepEqual(played, ["chime"]);
 
   invokeImpl = async (command) => {
     if (command === "show_chat_notification") throw new Error("native unavailable");
     return null;
   };
-  await exports.showChatNotification("Title", "Body", "chat", "account-a", () => current);
-  assert.deepEqual(shown[1], { title: "Title", options: { body: "Body", tag: "postal-chat", silent: false } });
+  await notify();
+  assert.deepEqual(shown[1], { title: "Title", options: { body: "Body", tag: "postal-chat", silent: true } });
+  assert.deepEqual(played, ["chime", "chime"]);
+
+  fallbackSound = "system";
+  await notify();
+  assert.deepEqual(shown[2], { title: "Title", options: { body: "Body", tag: "postal-chat", silent: false } });
+  assert.deepEqual(played, ["chime", "chime"]);
+  fallbackSound = "chime";
+
+  invokeImpl = async (command) => {
+    if (command === "show_chat_notification") throw new Error("native unavailable");
+    throw new Error("mute lookup failed");
+  };
+  const shownBeforeMuteFailure = shown.length;
+  const playedBeforeMuteFailure = played.length;
+  await notify();
+  assert.equal(shown.length, shownBeforeMuteFailure);
+  assert.equal(played.length, playedBeforeMuteFailure);
 
   let resolveSound!: (muted: boolean) => void;
   invokeImpl = async (command) => {
@@ -75,16 +106,30 @@ test("notification delivery stays account-bound through permission and sound awa
     return new Promise((resolve) => { resolveSound = resolve; });
   };
   const shownBeforeStale = shown.length;
-  const staleWeb = exports.showChatNotification("Title", "Body", "chat", "account-a", () => current);
+  const staleWeb = notify();
   await new Promise<void>((resolve) => setImmediate(resolve));
   current = false;
   resolveSound(true);
   await staleWeb;
   assert.equal(shown.length, shownBeforeStale);
+  assert.equal(played.length, playedBeforeMuteFailure);
+
+  let resolveDisplay!: (sound: string | null) => void;
+  current = true;
+  invokeImpl = async (command) => command === "show_chat_notification"
+    ? new Promise((resolve) => { resolveDisplay = resolve; })
+    : null;
+  const playedBeforeDisplay = played.length;
+  const staleDisplay = notify();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  current = false;
+  resolveDisplay("chime");
+  await staleDisplay;
+  assert.equal(played.length, playedBeforeDisplay);
 
   current = true;
   permission = async () => false;
   const callsBeforeDenied = calls.length;
-  await exports.showChatNotification("Title", "Body", "chat", "account-a", () => current);
+  await notify();
   assert.equal(calls.length, callsBeforeDenied);
 });

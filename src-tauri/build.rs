@@ -64,6 +64,7 @@ const COMMANDS: &[&str] = &[
     "message_page",
     "message_on_date",
     "load_older_for_date",
+    "preview_notification_sound",
     "chats",
     "chats_page",
     "resolve_names",

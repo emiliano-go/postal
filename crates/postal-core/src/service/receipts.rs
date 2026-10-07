@@ -166,10 +166,12 @@ impl WhatsAppService {
         if chat.ends_with("@newsletter") {
             let changed = self.store.mark_read(chat).await?;
             self.store.clear_marked_unread(chat).await?;
+            let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: chat.to_owned() });
             return Ok(changed);
         }
         let unread = if receipts { self.store.unread_ids(chat).await? } else { Vec::new() };
         let changed = self.store.mark_read(chat).await?;
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: chat.to_owned() });
         self.send_read_receipts(chat, unread).await?;
         if changed > 0 {
             if let Some(range) = self.read_range(chat, None).await {

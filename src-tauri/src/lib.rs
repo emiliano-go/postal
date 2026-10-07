@@ -156,6 +156,7 @@ macro_rules! postal_commands {
             messages::message_page,
             messages::message_on_date,
             messages::load_older_for_date,
+            settings::preview_notification_sound,
             chats::chats,
             chats::chats_page,
             contacts::resolve_names,

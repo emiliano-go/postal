@@ -2,18 +2,24 @@
   import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { t } from "$lib/i18n/localizer";
   import { invoke } from "$lib/utils/ipc";
+  import { session } from "$lib/state/session.svelte";
+  import NotificationSoundPicker from "./NotificationSoundPicker.svelte";
+  import type { NotificationSound } from "$lib/utils/wire";
   let { accountId, chat }: { accountId: string; chat: string } = $props();
   let muted = $state(false);
   let loaded = $state(false);
   let busy = $state(true);
   let error = $state<LocalizedError | string>("");
+  let soundBusy = $state(false);
+  let selectedSound = $derived(session.settings.notification_sound_overrides[accountId]?.[chat] ?? null);
+  let effectiveSound = $derived(selectedSound ?? session.settings.notification_sound);
   let generation = 0;
   function current(token: number, account: string, target: string) {
     return token === generation && account === accountId && target === chat;
   }
   async function load(account: string, target: string) {
     const token = ++generation;
-    muted = false; loaded = false; busy = true; error = "";
+    muted = false; loaded = false; busy = true; soundBusy = false; error = "";
     try {
       const value = await invoke<boolean | null>("chat_sound_muted", { accountId: account, chat: target });
       if (current(token, account, target)) { muted = value ?? false; loaded = true; }
@@ -36,8 +42,26 @@
     } catch (failure) { if (current(token, account, target)) error = normalizeError(failure); }
     finally { if (current(token, account, target)) busy = false; }
   }
+  async function changeSound(sound: NotificationSound | null) {
+    if (soundBusy) return;
+    const token = generation, account = accountId, target = chat;
+    const next = structuredClone(session.settings);
+    const chats = next.notification_sound_overrides[account] ?? {};
+    if (sound) chats[target] = sound;
+    else delete chats[target];
+    if (Object.keys(chats).length) next.notification_sound_overrides[account] = chats;
+    else delete next.notification_sound_overrides[account];
+    soundBusy = true; error = "";
+    try {
+      await invoke("set_settings", { settings: next });
+      if (current(token, account, target)) session.settings = next;
+    } catch (failure) { if (current(token, account, target)) error = normalizeError(failure); }
+    finally { if (current(token, account, target)) soundBusy = false; }
+  }
 </script>
 
+<NotificationSoundPicker value={selectedSound} previewSound={effectiveSound} allowInherit onchange={changeSound} />
+<p>{t("settings.sound_override_hint")}</p>
 <label><span>{t("settings.sound_mute")}</span>
   <input class="toggle" type="checkbox" checked={muted} disabled={busy || !loaded}
     onchange={(event) => change(event.currentTarget)} />
