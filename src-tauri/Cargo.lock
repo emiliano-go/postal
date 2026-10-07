@@ -3746,7 +3746,7 @@ name = "postal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "dirs 6.0.0",
  "dunce",
  "env_logger",
@@ -3781,7 +3781,7 @@ name = "postal-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "buffa",
  "diesel",
  "fs4",
@@ -3809,7 +3809,7 @@ name = "postal-plugins"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "libc",
  "log",
  "serde",
