@@ -749,6 +749,10 @@ impl WhatsAppService {
         self.store.messages_for(chat, limit).await
     }
 
+    pub async fn message_on_date(&self, chat: &str, start: i64, end: i64) -> Result<Option<StoredMessage>> {
+        self.store.message_on_date(chat, start, end).await
+    }
+
     /// Chat summaries, most recently active first.
     pub async fn chats(&self) -> Result<Vec<crate::store::ChatSummary>> {
         self.store.chats().await

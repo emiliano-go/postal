@@ -24,6 +24,23 @@ pub(super) async fn fetch_older(client: &Arc<Client>, store: &StoreWorker, chat:
 /// How long a "load older" request stays waitable before it is forgotten.
 pub(super) const OLDER_WAIT: Duration = Duration::from_secs(120);
 
+async fn wait_for_history_session(waits: &Arc<Mutex<OlderWaits>>, session: &str, wait: Duration) -> bool {
+    let notify = waits.lock().unwrap().completed_notify.clone();
+    tokio::time::timeout(wait, async {
+        loop {
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            {
+                let waits = waits.lock().unwrap();
+                if !waits.entries.contains_key(session) { return false; }
+                if waits.completed.get(session).is_some_and(|at| at.elapsed() < OLDER_WAIT) { return true; }
+            }
+            notified.await;
+        }
+    }).await.unwrap_or(false)
+}
+
 /// Pending "load older" requests, keyed by the session the phone will answer.
 ///
 /// The UI waits on the answer, so the core has to know which request an
@@ -33,6 +50,8 @@ pub(super) struct OlderWaits {
     entries: std::collections::HashMap<String, (std::time::Instant, String, bool)>,
     generations: std::collections::HashMap<String, u64>,
     inflight: std::collections::HashMap<u64, OlderInFlight>,
+    completed: std::collections::HashMap<String, std::time::Instant>,
+    completed_notify: Arc<tokio::sync::Notify>,
     next_request: u64,
 }
 
@@ -131,6 +150,16 @@ impl OlderWaits {
         self.entries.insert(session.to_string(), (now, chat.to_string(), false));
     }
 
+    fn complete(&mut self, session: &str) {
+        self.completed.retain(|_, at| at.elapsed() < OLDER_WAIT);
+        if self.completed.len() >= 128 && !self.completed.contains_key(session) {
+            if let Some(oldest) = self.completed.iter().min_by_key(|(_, at)| *at)
+                .map(|(session, _)| session.clone()) { self.completed.remove(&oldest); }
+        }
+        self.completed.insert(session.to_owned(), std::time::Instant::now());
+        self.completed_notify.notify_waiters();
+    }
+
     fn generation(&mut self, chat: &str) -> u64 {
         *self.generations.entry(chat.to_owned()).or_default()
     }
@@ -139,12 +168,14 @@ impl OlderWaits {
         *self.generations.entry(chat.to_owned()).or_default() += 1;
         self.entries.retain(|_, (_, pending, _)| pending != chat);
         self.inflight.retain(|_, request| request.chat != chat);
+        self.completed_notify.notify_waiters();
     }
 
     fn cancel_all(&mut self) {
         for generation in self.generations.values_mut() { *generation += 1; }
         self.entries.clear();
         self.inflight.clear();
+        self.completed_notify.notify_waiters();
     }
 
     pub(super) fn cancel_for_store(&mut self, store: &MessageStore, chat: Option<&str>) -> Result<()> {
@@ -192,6 +223,17 @@ pub(super) fn recall_allowed(chat: &str) -> bool {
 }
 
 impl WhatsAppService {
+    pub async fn load_older_for_date(&self, chat: &str, count: i32) -> Result<bool> {
+        let before = self.store.oldest_message(chat).await?;
+        let (chat, guard) = self.begin_older_request(chat).await?;
+        let wait = Duration::from_secs(15);
+        let Some(session) = tokio::time::timeout(wait, fetch_older(&self.client, &self.store, &chat, count.clamp(1, 50)))
+            .await.map_err(|_| anyhow::anyhow!("phone history request timed out"))?? else { return Ok(false) };
+        if !self.acknowledge_older_request(&guard, &session).await? { return Ok(false); }
+        anyhow::ensure!(wait_for_history_session(&self.older_waits, &session, wait).await, "phone history response unavailable");
+        Ok(self.store.oldest_message(&chat).await? != before)
+    }
+
     async fn begin_older_request(&self, chat: &str) -> Result<(String, OlderSendGuard)> {
         let chat = chat.to_owned();
         let waits = self.older_waits.clone();
@@ -285,6 +327,41 @@ impl WhatsAppService {
     }
 }
 
+#[cfg(test)]
+mod date_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn date_history_wait_requires_matching_durable_session() {
+        let waits = Arc::new(Mutex::new(OlderWaits::default()));
+        {
+            let mut waits = waits.lock().unwrap();
+            waits.remember(std::time::Instant::now(), "wanted", "date@s");
+            waits.remember(std::time::Instant::now(), "other", "date@s");
+            assert_eq!(waits.resolve("wanted").as_deref(), Some("date@s"));
+            waits.complete("other");
+        }
+        assert!(!wait_for_history_session(&waits, "wanted", Duration::from_millis(5)).await);
+        waits.lock().unwrap().complete("wanted");
+        assert!(wait_for_history_session(&waits, "wanted", Duration::from_millis(5)).await);
+    }
+
+    #[tokio::test]
+    async fn date_history_wait_retains_early_answer_and_bounds_missing_or_cancelled_answers() {
+        let waits = Arc::new(Mutex::new(OlderWaits::default()));
+        {
+            let mut waits = waits.lock().unwrap();
+            waits.complete("early");
+            waits.remember(std::time::Instant::now(), "early", "date@s");
+            waits.remember(std::time::Instant::now(), "missing", "date@s");
+        }
+        assert!(wait_for_history_session(&waits, "early", Duration::from_millis(5)).await);
+        assert!(!wait_for_history_session(&waits, "missing", Duration::from_millis(5)).await);
+        waits.lock().unwrap().cancel_all();
+        assert!(!wait_for_history_session(&waits, "missing", Duration::from_millis(5)).await);
+    }
+}
+
 impl Inbound {
     pub(super) async fn on_history_sync(&self, sync: &LazyHistorySync) {
         let Some(history) = sync.get() else {
@@ -353,6 +430,7 @@ impl Inbound {
             let _ = self.events.send(ServiceEvent::HistoryProgress { percent });
         }
         if batch_guard.finish().await.observed().is_some() {
+            if let Some(session) = request_session { self.older_waits.lock().unwrap().complete(session); }
             for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
             for chat in quiz_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
             for notice in quiz_notices { let _ = self.events.send(notice); }

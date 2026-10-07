@@ -154,6 +154,8 @@ macro_rules! postal_commands {
             accounts::rename_account,
             messages::messages,
             messages::message_page,
+            messages::message_on_date,
+            messages::load_older_for_date,
             chats::chats,
             chats::chats_page,
             contacts::resolve_names,

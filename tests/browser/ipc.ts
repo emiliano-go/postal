@@ -29,6 +29,16 @@ export const previewFixture = {
     deleted: n === 24, revoked: n === 25, spoiler: n === 28, read: false, mentioned: n === 29,
   }) as StoredMessage),
 };
+export const dateJumpFixture = {
+  pages: [] as StoredMessage[][],
+  lookups: [] as { chat: unknown; start: unknown; end: unknown }[],
+  requests: [] as Record<string, unknown>[],
+  failure: false,
+  deferNext: false,
+  pending: [] as (() => void)[],
+  deferMarks: false,
+  pendingMarks: [] as (() => void)[],
+};
 export const pinFixture = {
   rows: [] as StoredMessage[],
   marks: null as Marks | null,
@@ -263,7 +273,38 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
   if (command === "load_older") { windowFixture.phoneRequests++; return undefined as T; }
   if (command === "marks") {
     if (args?.chat === "pins-fixture@s.whatsapp.net" && pinFixture.marks) return pinFixture.marks as T;
+    if (args?.chat === "date@s" && dateJumpFixture.deferMarks) {
+      dateJumpFixture.deferMarks = false;
+      const marks = { reactions: [], starred: [], pinned: null, pinned_messages: [], polls: [], events: [], view_once: [], forwarded: [], edited: [] };
+      return new Promise<T>((resolve) => dateJumpFixture.pendingMarks.push(() => resolve(marks as T)));
+    }
     return { reactions: [], starred: [], pinned: null, pinned_messages: [], polls: [], events: [], view_once: [], forwarded: [], edited: [] } as T;
+  }
+  if (command === "message_on_date") {
+    dateJumpFixture.lookups.push({ chat: args?.chat, start: args?.start, end: args?.end });
+    if (dateJumpFixture.failure) throw new Error("Synthetic local date lookup failure");
+    return (windowFixture.archive.filter((message) => message.chat === args?.chat
+      && message.timestamp >= Number(args?.start) && message.timestamp < Number(args?.end))
+      .toSorted((a, b) => a.timestamp - b.timestamp || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id.localeCompare(b.id))[0] ?? null) as T;
+  }
+  if (command === "load_older_for_date") {
+    dateJumpFixture.requests.push({ ...args });
+    const complete = () => {
+      if (dateJumpFixture.failure) throw new Error("Synthetic date history failure");
+      const page = dateJumpFixture.pages.shift() ?? [];
+      let added = false;
+      for (const message of page) if (!windowFixture.archive.some((row) => row.chat === message.chat && row.id === message.id)) {
+        windowFixture.archive.push(message); added = true;
+      }
+      return added as T;
+    };
+    if (dateJumpFixture.deferNext) {
+      dateJumpFixture.deferNext = false;
+      return new Promise<T>((resolve, reject) => dateJumpFixture.pending.push(() => {
+        try { resolve(complete()); } catch (error) { reject(error); }
+      }));
+    }
+    return complete();
   }
   if (command === "storage_report") {
     let files = fixture.media.filter((file) => !args?.chat || file.chat === args.chat)

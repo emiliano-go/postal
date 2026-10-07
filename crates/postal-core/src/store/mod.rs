@@ -570,8 +570,34 @@ pub struct ViewOnce {
 
 /// SQLite-backed message store.
 pub struct MessageStore {
-    conn: Mutex<Connection>,
+    conn: ConnectionMutex,
     pending_rsvp_limit: i64,
+}
+
+struct ConnectionMutex(Mutex<Connection>);
+
+impl ConnectionMutex {
+    fn new(conn: Connection) -> Self { Self(Mutex::new(conn)) }
+
+    fn into_inner(self) -> std::sync::LockResult<Connection> { self.0.into_inner() }
+
+    fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Connection>> {
+        match self.0.lock() {
+            Ok(guard) => Ok(guard),
+            Err(poisoned) => {
+                let guard = poisoned.into_inner();
+                if !guard.is_autocommit() {
+                    if let Err(error) = guard.execute_batch("ROLLBACK") {
+                        log::error!(target: "postal_core::storage", "could not roll back poisoned connection: {error}");
+                        return Err(std::sync::PoisonError::new(guard));
+                    }
+                }
+                self.0.clear_poison();
+                log::warn!(target: "postal_core::storage", "recovered poisoned message store connection");
+                Ok(guard)
+            }
+        }
+    }
 }
 
 fn unix_now() -> i64 {
@@ -659,7 +685,7 @@ impl MessageStore {
             schema_elapsed, started.elapsed());
 
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: ConnectionMutex::new(conn),
             pending_rsvp_limit,
         })
     }

@@ -15,6 +15,7 @@
     empty,
     onquery,
     onmore,
+    ondatejump,
     moreLabel = t("content.load_more"),
     initialQuery = "",
     onopen,
@@ -31,6 +32,7 @@
     onquery?: (query: string) => void;
     /** Present while more results can be fetched. */
     onmore?: () => Promise<void>;
+    ondatejump?: (date: string, progress: (pages: number) => void, signal: AbortSignal) => Promise<"found" | "offline" | "unavailable" | "missing" | "cancelled" | "limit">;
     moreLabel?: string;
     initialQuery?: string;
     onopen: (item: FoundItem) => void;
@@ -39,6 +41,12 @@
 
   let query = $state(untrack(() => initialQuery));
   let loadingMore = $state(false);
+  let date = $state("");
+  let dateBusy = $state(false);
+  let dateStatus = $state<"offline" | "unavailable" | "missing" | "cancelled" | "limit" | null>(null);
+  let datePages = $state(0);
+  let dateRequest = 0;
+  let dateController: AbortController | undefined;
   async function more() {
     if (!onmore || loadingMore) return;
     loadingMore = true;
@@ -49,11 +57,42 @@
     }
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
-  onDestroy(() => clearTimeout(timer));
+  onDestroy(() => { clearTimeout(timer); dateController?.abort(); });
   function typed() {
     if (!onquery) return;
+    if (dateBusy) cancelDate();
     clearTimeout(timer);
     timer = setTimeout(() => onquery(query), 200);
+  }
+
+  async function jumpDate() {
+    if (!ondatejump || !date || dateBusy) return;
+    const request = ++dateRequest, controller = new AbortController();
+    dateController = controller;
+    dateBusy = true;
+    datePages = 0;
+    dateStatus = null;
+    try {
+      const result = await ondatejump(date, (pages) => { if (request === dateRequest) datePages = pages; }, controller.signal);
+      if (request === dateRequest && result !== "found" && result !== "cancelled") dateStatus = result;
+    } catch {
+      if (request === dateRequest) dateStatus = "unavailable";
+    } finally {
+      if (request === dateRequest) { dateBusy = false; dateController = undefined; }
+    }
+  }
+
+  function cancelDate() {
+    dateController?.abort();
+    dateController = undefined;
+    ++dateRequest;
+    dateBusy = false;
+    dateStatus = "cancelled";
+  }
+
+  function closeFinder() {
+    dateController?.abort();
+    onclose();
   }
 
   const needle = $derived(query.trim().toLowerCase());
@@ -86,14 +125,14 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
+<svelte:window onkeydown={(e) => e.key === "Escape" && closeFinder()} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="backdrop"
   role="presentation"
   transition:fade|global={{ duration: motion(140) }}
-  onclick={(e) => e.target === e.currentTarget && onclose()}>
+  onclick={(e) => e.target === e.currentTarget && closeFinder()}>
   <div
     class="dialog"
     role="dialog"
@@ -105,13 +144,22 @@
         <h2><bdi dir="auto">{title}</bdi></h2>
         {#if subtitle}<span class="sub">{subtitle}</span>{/if}
       </div>
-      <button class="close" aria-label={t("content.close")} onclick={onclose}><Icon name="x" size={18} /></button>
+      <button class="close" aria-label={t("content.close")} onclick={closeFinder}><Icon name="x" size={18} /></button>
     </header>
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
       <input {placeholder} bind:value={query} oninput={typed} autofocus />
     </label>
+    {#if ondatejump}
+      <form class="date-jump" onsubmit={(event) => { event.preventDefault(); void jumpDate(); }}>
+        <label>{t("page.jump_to_date")} <input type="date" bind:value={date} disabled={dateBusy} /></label>
+        <button type="submit" disabled={!date || dateBusy}>{t("page.jump_to_date_action")}</button>
+        {#if dateBusy}<button type="button" onclick={cancelDate}>{t("page.date_jump_cancel")}</button>{/if}
+      </form>
+      {#if dateBusy}<p class="date-status" role="status">{datePages ? t("page.date_jump_progress", { pages: datePages }) : t("page.date_jump_searching")}</p>
+      {:else if dateStatus}<p class="date-status" role="status">{t(`page.date_jump_${dateStatus}`)}</p>{/if}
+    {/if}
     <ul>
       {#if items === null}
         <li class="empty">{t("content.loading")}</li>
@@ -226,6 +274,18 @@
     color: var(--text);
     font: inherit;
   }
+  .date-jump {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 20px 10px;
+  }
+  .date-jump label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.8125rem; }
+  .date-jump input { min-width: 0; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+  .date-jump button { padding: 6px 10px; border: 0; border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; cursor: pointer; }
+  .date-jump button:disabled { opacity: .55; cursor: default; }
+  .date-status { margin: 0 20px 8px; color: var(--muted); font-size: .8125rem; }
   ul {
     list-style: none;
     margin: 0;

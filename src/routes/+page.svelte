@@ -9,6 +9,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { settingsSearchShortcut } from "$lib/utils/settings-search";
   import { messageRailAction } from "$lib/utils/message-rail";
+  import { localDayRange } from "$lib/utils/local-day";
   import { invoke } from "$lib/utils/ipc";
   import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { uiError, uiMessage } from "$lib/state/localized";
@@ -1044,6 +1045,29 @@
     } finally {
       if (owns()) { ui.seeking = false; ui.pendingJump = null; }
     }
+  }
+
+  async function jumpToDate(value: string, progress: (pages: number) => void, signal: AbortSignal) {
+    const finder = ui.finder, chat = finder?.mode === "search" ? finder.chat : null;
+    const account = session.activeAccount, generation = messages.accountGeneration, range = localDayRange(value);
+    if (!account || !chat || chat !== chats.selectedChat || !range) return "missing" as const;
+    const current = () => !signal.aborted && ui.finder === finder && account === session.activeAccount
+      && generation === messages.accountGeneration && chat === chats.selectedChat;
+    const found = await messages.findMessageOnDate(chat, range.start, range.end, signal, progress);
+    if (!current()) return "cancelled" as const;
+    if (found.status !== "found") return found.status;
+    if (keywords.hidden(found.message)) {
+      ui.fail(uiError("error.page.keyword_hidden"));
+      return "missing" as const;
+    }
+    const loaded = await messages.showStoredMessage(chat, found.message.id, signal);
+    if (!current()) return "cancelled" as const;
+    if (!loaded) return "missing" as const;
+    await tick();
+    if (!current()) return "cancelled" as const;
+    ui.finder = null;
+    scrollToMessage(found.message.id);
+    return "found" as const;
   }
 
 
@@ -2383,6 +2407,9 @@
     empty={ui.finder.mode === "search" ? t("page.finder_search_empty") : t("page.finder_mentions_empty")}
     onquery={ui.finder.mode === "search" ? (q) => searchChat(q) : undefined}
     onmore={ui.finder.mode === "search" && ui.finder.more ? () => searchChat(ui.finder?.query ?? "", true) : undefined}
+    ondatejump={ui.finder.mode === "search" && ui.finder.chat === chats.selectedChat
+      ? jumpToDate
+      : undefined}
     onopen={(item) => {
       ui.finder = null;
       void jumpTo(item.chat, item.id);

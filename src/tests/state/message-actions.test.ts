@@ -42,6 +42,7 @@ async function withApp(run: (app: {
     downloadMedia: (chat: string | null, message: StoredMessage) => Promise<void>;
     recoverQuote: (chat: string | null, message: StoredMessage) => Promise<string | null>;
     markPlayed: (message: StoredMessage) => void;
+    consumeDateSeekHistory: (chat: string) => boolean;
   };
   ui: {
     notice: string | null;
@@ -379,6 +380,31 @@ test("sync completion flushes a burst once and watchdog never crosses accounts",
     if (command === "message_page") return { messages: [], has_more: false };
     if (command === "chats") return [];
     if (command === "marks") return { reactions: [], starred: [], edited: [], forwarded: [], view_once: [] };
+  });
+});
+
+test("date history completion keeps the current window until navigation commits", async () => {
+  await withApp(async ({ loadEvents, messages, chats, session, calls }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    session.activeAccount = "date-history-fixture";
+    session.gateDone = true;
+    session.settings.notifications_enabled = false;
+    chats.selectedChat = "date@s";
+    messages.prepareChat("date@s", 50);
+    messages.acceptMessages([{ chat: "date@s", id: "current", timestamp: 300, text: "Current" } as StoredMessage]);
+    const active = messages.consumeDateSeekHistory;
+    messages.consumeDateSeekHistory = (chat) => chat === "date@s";
+    const host: EventHost = { scrollToBottom() { assert.fail("date fetch must not follow bottom"); },
+      anchor: () => null, reveal: () => true, reconnect: async () => {} };
+    try {
+      await dispatchServiceEvent({ kind: "historyLoaded", chats: ["date@s"] }, host);
+      assert.deepEqual(messages.messages.map((message) => message.id), ["current"]);
+      assert.equal(calls.filter((call) => call.command === "message_page").length, 0);
+      assert.ok(calls.some((call) => call.command === "chats_page"));
+    } finally { messages.consumeDateSeekHistory = active; messages.resetAccount(); }
+  }, (command) => {
+    if (command === "chats") return [];
+    if (command === "message_page") return { messages: [], has_more: false };
   });
 });
 

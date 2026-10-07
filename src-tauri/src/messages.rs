@@ -4,11 +4,47 @@ use tauri::State;
 use crate::{AppState, settings::sends_privacy};
 
 #[tauri::command(async)]
+pub(crate) async fn message_on_date(state: State<'_, AppState>, account_id: String,
+    chat: String, start: i64, end: i64) -> CommandResult<Option<StoredMessage>> {
+    let service = state.account_service(&account_id)
+        .map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
+    let result = service.message_on_date(&chat, start, end).await;
+    if !std::sync::Arc::ptr_eq(&service, &state.account_service(&account_id)
+        .map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?) {
+        return Err(CommandError::code("error.account_changed"));
+    }
+    result.map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
+pub(crate) async fn load_older_for_date(state: State<'_, AppState>, account_id: String,
+    chat: String, count: Option<i32>) -> CommandResult<bool> {
+    let service = state.account_service(&account_id)
+        .map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
+    let result = service.load_older_for_date(&chat, count.unwrap_or(50)).await;
+    if !std::sync::Arc::ptr_eq(&service, &state.account_service(&account_id)
+        .map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?) {
+        return Err(CommandError::code("error.account_changed"));
+    }
+    result.map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
 pub(crate) async fn message_page(state: State<'_, AppState>, chat: String, limit: Option<u32>,
     cursor: Option<postal_core::store::MessageCursor>, direction: Option<postal_core::store::MessagePageDirection>,
-    anchor_id: Option<String>) -> CommandResult<postal_core::store::MessagePage> {
-    state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?.message_page(&chat, limit.unwrap_or(500), cursor, direction.unwrap_or_default(), anchor_id.as_deref())
-        .await.map_err(CommandError::from)
+    anchor_id: Option<String>, account_id: Option<String>) -> CommandResult<postal_core::store::MessagePage> {
+    let service = match account_id.as_deref() {
+        Some(account) => state.account_service(account).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?,
+        None => state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?,
+    };
+    let result = service.message_page(&chat, limit.unwrap_or(500), cursor, direction.unwrap_or_default(), anchor_id.as_deref()).await;
+    if let Some(account) = account_id {
+        if !std::sync::Arc::ptr_eq(&service, &state.account_service(&account)
+            .map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?) {
+            return Err(CommandError::code("error.account_changed"));
+        }
+    }
+    result.map_err(CommandError::from)
 }
 
 /// Stored messages for a chat, newest first.

@@ -124,7 +124,7 @@ mod tests {
         migrate(&conn).unwrap();
         migrate(&conn).unwrap();
         MessageStore {
-            conn: Mutex::new(conn),
+            conn: ConnectionMutex::new(conn),
             pending_rsvp_limit: 512,
         }
     }

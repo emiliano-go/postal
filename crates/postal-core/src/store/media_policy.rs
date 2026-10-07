@@ -192,7 +192,7 @@ mod tests {
             INSERT INTO lid_pn VALUES ('300','100');").unwrap();
         migrate(&conn).unwrap();
         MessageStore {
-            conn: Mutex::new(conn),
+            conn: ConnectionMutex::new(conn),
             pending_rsvp_limit: 512,
         }
     }

@@ -62,6 +62,8 @@
     "allow-rename-account",
     "allow-messages",
     "allow-message-page",
+    "allow-message-on-date",
+    "allow-load-older-for-date",
     "allow-message-media-action",
     "allow-chats",
     "allow-chats-page",

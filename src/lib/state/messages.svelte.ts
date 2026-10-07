@@ -15,7 +15,29 @@ import { uiError } from "./localized.ts";
 import { pinnedMessageIds } from "$lib/utils/message-pins";
 
 const PAGE = 50;
+const DATE_SEEK_MAX_PAGES = 40;
+const DATE_SEEK_MAX_MS = 60_000;
+const DATE_SEEK_EVENT_GRACE_MS = 5_000;
+const ABORTED = Symbol("aborted");
+const TIMED_OUT = Symbol("timed_out");
 export const MAX_DOWNLOAD_TRIES = 3;
+
+export type DateSeekResult = { status: "found"; message: StoredMessage }
+  | { status: "cancelled" | "offline" | "unavailable" | "missing" | "limit" };
+
+function awaitAbort<T>(promise: Promise<T>, signal: AbortSignal, timeoutMs = Infinity): Promise<T | typeof ABORTED | typeof TIMED_OUT> {
+  if (signal.aborted) return Promise.resolve(ABORTED);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => { signal.removeEventListener("abort", aborted); clearTimeout(timer); };
+    const timer = Number.isFinite(timeoutMs) ? setTimeout(() => { cleanup(); resolve(TIMED_OUT); }, Math.max(0, timeoutMs)) : undefined;
+    const aborted = () => { cleanup(); resolve(ABORTED); };
+    signal.addEventListener("abort", aborted, { once: true });
+    promise.then(
+      (value) => { cleanup(); resolve(value); },
+      (error) => { cleanup(); reject(error); },
+    );
+  });
+}
 
 export class MessagesState {
   messageLimit = $state(DEFAULT_MESSAGE_WINDOW);
@@ -30,6 +52,9 @@ export class MessagesState {
   private rowRequestSeq = 0;
   private rowRequests = new Map<string, number>();
   private channelOlderRequest = 0;
+  private dateSeekSeq = 0;
+  private dateSeekPageSeq = 0;
+  private dateSeekFlights = new Map<string, Map<number, ReturnType<typeof setTimeout> | null>>();
   loadingOlder = $state(false);
   /** Set while a newer page is fetched at the bottom of the scrollback. */
   loadingNewer = $state(false);
@@ -55,6 +80,106 @@ export class MessagesState {
   messagesSeq = 0;
 
   get accountGeneration() { return this.accountSeq; }
+
+  private dateSeekFlightKey(account: string | null, generation: number, chat: string) {
+    return `${account ?? ""}\0${generation}\0${chat}`;
+  }
+
+  isDateSeekActive(chat: string) {
+    return (this.dateSeekFlights.get(this.dateSeekFlightKey(session.activeAccount, this.accountSeq, chat))?.size ?? 0) > 0;
+  }
+
+  consumeDateSeekHistory(chat: string) {
+    const key = this.dateSeekFlightKey(session.activeAccount, this.accountSeq, chat);
+    const token = this.dateSeekFlights.get(key)?.keys().next().value;
+    if (token === undefined) return false;
+    this.releaseDateSeekPage(key, token);
+    return true;
+  }
+
+  private startDateSeekPage(account: string, generation: number, chat: string) {
+    const key = this.dateSeekFlightKey(account, generation, chat), pages = this.dateSeekFlights.get(key) ?? new Map();
+    const token = ++this.dateSeekPageSeq;
+    pages.set(token, null);
+    this.dateSeekFlights.set(key, pages);
+    return { key, token };
+  }
+
+  private releaseDateSeekPage(key: string, token: number) {
+    const pages = this.dateSeekFlights.get(key);
+    const timer = pages?.get(token);
+    if (timer) clearTimeout(timer);
+    pages?.delete(token);
+    if (!pages?.size) this.dateSeekFlights.delete(key);
+  }
+
+  private expireDateSeekPage(key: string, token: number) {
+    const pages = this.dateSeekFlights.get(key);
+    if (!pages?.has(token)) return;
+    pages.set(token, setTimeout(() => this.releaseDateSeekPage(key, token), DATE_SEEK_EVENT_GRACE_MS));
+  }
+
+  async findMessageOnDate(chat: string, start: number, end: number, signal: AbortSignal,
+    onProgress: (pages: number) => void): Promise<DateSeekResult> {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || !chat || chat !== this.chat) return { status: "missing" };
+    const account = session.activeAccount, generation = this.accountSeq, request = ++this.dateSeekSeq;
+    if (!account) return { status: "offline" };
+    const deadline = Date.now() + DATE_SEEK_MAX_MS, remaining = () => Math.max(0, deadline - Date.now());
+    const current = () => !signal.aborted && request === this.dateSeekSeq && account === session.activeAccount
+      && generation === this.accountSeq && chat === this.chat;
+    const lookup = async () => {
+      const message = await awaitAbort(invoke<StoredMessage | null>("message_on_date", { accountId: account, chat, start, end }), signal, remaining());
+      return message === ABORTED || message === TIMED_OUT ? null : message;
+    };
+    const oldestTimestamp = async () => {
+      const page = await awaitAbort(invoke<MessagePage>("message_page", { accountId: account, chat, limit: 1, direction: "after" }), signal, remaining());
+      if (page === ABORTED || page === TIMED_OUT) return page;
+      return page.messages.at(-1)?.timestamp ?? null;
+    };
+    let message: StoredMessage | null = null;
+    try {
+      message = await lookup();
+      if (!current()) return { status: "cancelled" };
+      if (!message && Date.now() >= deadline) return { status: "limit" };
+      let oldest = await oldestTimestamp();
+      if (!current()) return { status: "cancelled" };
+      if (oldest === TIMED_OUT) return { status: "limit" };
+      if (oldest === ABORTED) return { status: "cancelled" };
+      if (!session.connected) return message ? { status: "found", message }
+        : oldest !== null && oldest < start ? { status: "missing" } : { status: "offline" };
+      for (let pages = 0; pages < DATE_SEEK_MAX_PAGES; pages++) {
+        if (!current()) return { status: "cancelled" };
+        if (!session.connected) return message ? { status: "found", message }
+          : oldest !== null && oldest < start ? { status: "missing" } : { status: "offline" };
+        if (oldest !== null && oldest < start) return message ? { status: "found", message } : { status: "missing" };
+        if (Date.now() >= deadline) return { status: "limit" };
+        const pageRequest = this.startDateSeekPage(account, generation, chat);
+        const loading = invoke<boolean>("load_older_for_date", { accountId: account, chat, count: PAGE })
+          .finally(() => this.expireDateSeekPage(pageRequest.key, pageRequest.token));
+        const changed = await awaitAbort(loading, signal, remaining());
+        if (changed === ABORTED || !current()) return { status: "cancelled" };
+        if (changed === TIMED_OUT) return { status: "limit" };
+        if (!changed) {
+          message = await lookup();
+          if (!current()) return { status: "cancelled" };
+          if (!message && Date.now() >= deadline) return { status: "limit" };
+          return message ? { status: "found", message } : { status: "missing" };
+        }
+        onProgress(pages + 1);
+        message = await lookup();
+        if (!current()) return { status: "cancelled" };
+        if (!message && Date.now() >= deadline) return { status: "limit" };
+        oldest = await oldestTimestamp();
+        if (!current()) return { status: "cancelled" };
+        if (oldest === TIMED_OUT) return { status: "limit" };
+        if (oldest === ABORTED) return { status: "cancelled" };
+      }
+      return { status: "limit" };
+    } catch {
+      return current() ? session.connected ? { status: "unavailable" }
+        : message ? { status: "found", message } : { status: "offline" } : { status: "cancelled" };
+    }
+  }
 
   /** Invalidates in-flight reloads; the holder compares its id against {@link messagesSeq}. */
   nextSeq() {
@@ -333,20 +458,31 @@ export class MessagesState {
     return loaded;
   }
 
-  async showStoredMessage(chat: string, id: string): Promise<boolean> {
-    if (chat !== this.chat) return false;
-    const account = this.accountSeq;
+  async showStoredMessage(chat: string, id: string, signal?: AbortSignal): Promise<boolean> {
+    if (chat !== this.chat || signal?.aborted) return false;
+    const account = session.activeAccount, generation = this.accountSeq;
     this.loadingOlder = false;
     this.historyActive = false;
     this.recall = null;
     clearTimeout(this.olderTimer);
     this.settleRecall();
     const seq = ++this.messagesSeq;
-    const page = await invoke<MessagePage>("message_page", { chat, limit: this.messageLimit, anchorId: id, direction: "through" });
-    if (account !== this.accountSeq || seq !== this.messagesSeq || chat !== this.chat || !page.messages.some((m) => m.chat === chat && m.id === id)) return false;
+    const page = await invoke<MessagePage>("message_page", {
+      ...(account ? { accountId: account } : {}), chat, limit: this.messageLimit, anchorId: id, direction: "through",
+    });
+    if (signal?.aborted || account !== session.activeAccount || generation !== this.accountSeq || seq !== this.messagesSeq
+      || chat !== this.chat || !page.messages.some((m) => m.chat === chat && m.id === id)) return false;
+    const marksSeq = ++this.marksSeq;
+    let loadedMarks: Marks | undefined;
+    try {
+      loadedMarks = await invoke<Marks>("marks", { chat, ids: page.messages.map((message) => message.id) });
+    } catch (error) {
+      if (!signal?.aborted && account === session.activeAccount && generation === this.accountSeq && seq === this.messagesSeq) ui.fail(error);
+    }
+    if (signal?.aborted || account !== session.activeAccount || generation !== this.accountSeq || seq !== this.messagesSeq || chat !== this.chat) return false;
     this.atLatest = false;
     this.acceptMessages(page.messages);
-    await this.loadMarks(chat);
+    if (loadedMarks && marksSeq === this.marksSeq) this.marks = loadedMarks;
     return true;
   }
 
@@ -572,6 +708,7 @@ export class MessagesState {
   /** Readies a fresh chat: pager reset, recall cancelled, autoplay cleared. */
   prepareChat(chat: string, limit = DEFAULT_MESSAGE_WINDOW) {
     this.channelOlderRequest++;
+    this.dateSeekSeq++;
     this.chat = chat;
     this.messageLimit = limit;
     this.window = new MessageWindow(limit);
@@ -600,6 +737,7 @@ export class MessagesState {
   /** Mirrors resetUi: the list and the mention queue are dropped. */
   resetAccount() {
     this.channelOlderRequest++;
+    this.dateSeekSeq++;
     this.accountSeq++;
     this.chat = null;
     this.refreshPending = false;

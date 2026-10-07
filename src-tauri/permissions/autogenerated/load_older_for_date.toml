@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-older-for-date"
+description = "Enables the load_older_for_date command without any pre-configured scope."
+commands.allow = ["load_older_for_date"]
+
+[[permission]]
+identifier = "deny-load-older-for-date"
+description = "Denies the load_older_for_date command without any pre-configured scope."
+commands.deny = ["load_older_for_date"]

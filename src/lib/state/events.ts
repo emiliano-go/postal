@@ -586,12 +586,14 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       }
       {
         const account = session.activeAccount, generation = messages.accountGeneration, chat = chats.selectedChat;
+        const dateHistory = !!chat && payload.chats.includes(chat) && messages.consumeDateSeekHistory(chat);
         const reload = messagesDirty, markRead = dirtyMarkRead;
         resetDeferred();
         try {
           await chats.refreshChats();
           if (account !== session.activeAccount || generation !== messages.accountGeneration || chat !== chats.selectedChat) break;
           if (chat && payload.chats.includes(chat)) {
+            if (dateHistory) break;
             const requestedOlder = messages.loadingOlder && messages.recall !== null;
             if (requestedOlder) await messages.finishOlder(chat);
             else {

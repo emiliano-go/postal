@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-message-on-date"
+description = "Enables the message_on_date command without any pre-configured scope."
+commands.allow = ["message_on_date"]
+
+[[permission]]
+identifier = "deny-message-on-date"
+description = "Denies the message_on_date command without any pre-configured scope."
+commands.deny = ["message_on_date"]

@@ -24,6 +24,17 @@ pub struct MessagePage {
 }
 
 impl MessageStore {
+    pub fn message_on_date(&self, chat: &str, start: i64, end: i64) -> Result<Option<StoredMessage>> {
+        anyhow::ensure!(end > start && end.checked_sub(start).is_some_and(|span| span <= 172_800), "invalid message date range");
+        let conn = self.conn.lock().unwrap();
+        let chat = names::canonical_chat(&conn, chat)?;
+        conn.query_row(&format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages m LEFT JOIN names n ON n.jid = m.sender
+             WHERE m.chat = ?1 AND m.timestamp >= ?2 AND m.timestamp < ?3 AND {VISIBLE_MESSAGE_SQL}
+             ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC LIMIT 1"
+        ), params![chat.as_ref(), start, end], message_row).optional().map_err(Into::into)
+    }
+
     pub fn message_page(&self, chat: &str, limit: u32, cursor: Option<&MessageCursor>, direction: MessagePageDirection) -> Result<MessagePage> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
@@ -58,6 +69,26 @@ impl MessageStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn date_lookup_selects_first_visible_message_with_exclusive_day_end() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        for (id, timestamp, deleted) in [("before", 99, false), ("hidden", 100, true),
+            ("z-first", 101, false), ("a-second", 101, false), ("end", 200, false)] {
+            store.insert_message(&StoredMessage {
+                header: MessageHeader { chat: "date@s".into(), id: id.into(), timestamp, ..Default::default() },
+                text: if deleted { String::new() } else { id.into() },
+                local: LocalState { deleted, ..Default::default() }, ..Default::default()
+            }).unwrap();
+        }
+        assert_eq!(store.message_on_date("date@s", 100, 200).unwrap().unwrap().header.id, "z-first");
+        assert!(store.message_on_date("date@s", 102, 200).unwrap().is_none());
+        assert_eq!(store.message_on_date("date@s", 200, 201).unwrap().unwrap().header.id, "end");
+        assert!(store.message_on_date("other@s", 100, 200).unwrap().is_none());
+        assert!(store.message_on_date("date@s", 200, 100).is_err());
+        assert!(store.message_on_date("date@s", i64::MIN, i64::MAX).is_err());
+        assert_eq!(store.count().unwrap(), 5);
+    }
 
     #[test]
     fn local_preview_preserves_unread_mentions_and_stored_state() {
@@ -193,6 +224,11 @@ mod tests {
 }
 
 impl StoreWorker {
+    pub(crate) async fn message_on_date(&self, chat: &str, start: i64, end: i64) -> Result<Option<StoredMessage>> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.message_on_date(&chat, start, end)).await
+    }
+
     pub(crate) async fn message_page(&self, chat: &str, limit: u32, cursor: Option<&MessageCursor>, direction: MessagePageDirection) -> Result<MessagePage> {
         let chat = chat.to_owned();
         let cursor = cursor.cloned();
