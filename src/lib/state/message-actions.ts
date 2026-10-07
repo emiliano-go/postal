@@ -250,7 +250,7 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
     else if (rule.when(ctx)) divided.add(rule.id);
   }
   const items: MenuItem[] = [];
-  const order: readonly MenuId[] = m.chat.endsWith("@newsletter") ? ["reactions", "copy", "media"] : MESSAGE_MENU_ORDER;
+  const order: readonly MenuId[] = m.chat.endsWith("@newsletter") ? ["reactions", "copy", "forward", "media"] : MESSAGE_MENU_ORDER;
   for (const id of order) {
     const built = MENU_BUILDERS[id](ctx);
     if (!built) continue;
@@ -360,18 +360,27 @@ export async function forwardMessages(batch: StoredMessage[], targets: string[])
   batch = batch.filter((message) => !isUnavailable(message));
   if (batch.length === 0) return;
   for (const to of targets) guardBroadcastSend(to);
+  const accountId = session.activeAccount, generation = messages.accountGeneration;
+  const current = () => !!accountId && accountId === session.activeAccount && generation === messages.accountGeneration;
+  if (!current()) throw uiError("error.account_changed");
   const selection = ui.picking;
   await composer.enqueue(async (signal) => {
     for (const to of targets) {
+      signal.throwIfAborted();
+      if (!current()) throw uiError("error.account_changed");
       guardBroadcastSend(to);
       for (const m of batch) {
         signal.throwIfAborted();
-        await invoke("forward_message", { chat: m.chat, id: m.id, to });
+        if (!current()) throw uiError("error.account_changed");
+        await invoke("forward_message", { accountId, chat: m.chat, id: m.id, to });
+        if (!current()) throw uiError("error.account_changed");
       }
     }
   });
-  if (ui.picking === selection) ui.picking = null;
+  if (!current()) throw uiError("error.account_changed");
   await chats.refreshChats();
+  if (!current()) throw uiError("error.account_changed");
+  if (ui.picking === selection) ui.picking = null;
 }
 
 /** Whether we may delete this message for everyone: ours, or ours to moderate. */

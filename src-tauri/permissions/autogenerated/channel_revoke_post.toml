@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-channel-revoke-post"
+description = "Enables the channel_revoke_post command without any pre-configured scope."
+commands.allow = ["channel_revoke_post"]
+
+[[permission]]
+identifier = "deny-channel-revoke-post"
+description = "Denies the channel_revoke_post command without any pre-configured scope."
+commands.deny = ["channel_revoke_post"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-channel-post-poll"
+description = "Enables the channel_post_poll command without any pre-configured scope."
+commands.allow = ["channel_post_poll"]
+
+[[permission]]
+identifier = "deny-channel-post-poll"
+description = "Denies the channel_post_poll command without any pre-configured scope."
+commands.deny = ["channel_post_poll"]

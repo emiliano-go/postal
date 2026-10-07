@@ -71,6 +71,7 @@
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
   import ChannelsPanel from "$lib/chat/ChannelsPanel.svelte";
   import ChannelActions from "$lib/chat/ChannelActions.svelte";
+  import ChannelComposer from "$lib/chat/ChannelComposer.svelte";
   import { channels } from "$lib/state/channels.svelte";
   import MessageList, { type ViewportAnchor } from "$lib/messages/MessageList.svelte";
   import ComposerBar from "$lib/composer/ComposerBar.svelte";
@@ -141,6 +142,8 @@
   let a11yPromptOpen = $state(false);
   let helpOpen = $state(false);
   let showChannels = $state(false);
+  let channelEditing = $state<StoredMessage | null>(null);
+  let channelRevoking = $state<StoredMessage | null>(null);
   $effect(() => {
     const account = session.activeAccount, generation = messages.accountGeneration, connected = session.connected;
     untrack(() => { void activateChannels(account, generation, connected); });
@@ -152,6 +155,80 @@
     if (!account || !connected || !current() || !chat?.endsWith("@newsletter")) return;
     await channels.pageMessages(account, generation, chat, 50, true);
     if (current() && chats.selectedChat === chat && messages.atLatest && !messages.loadingOlder) await messages.reloadMessages(chat);
+  }
+  $effect(() => {
+    const account = session.activeAccount, generation = messages.accountGeneration, chat = chats.selectedChat, connected = session.connected;
+    untrack(() => {
+      channelEditing = null;
+      channelRevoking = null;
+      if (account && connected && chat?.endsWith("@newsletter")) void channels.checkCanPost(account, generation, chat);
+    });
+  });
+  function channelCurrent(account: string, generation: number, chat: string) {
+    return session.activeAccount === account && messages.accountGeneration === generation
+      && chats.selectedChat === chat && session.connected;
+  }
+  function channelEnqueue(account: string, generation: number, chat: string) {
+    const current = () => channelCurrent(account, generation, chat);
+    return <T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(async (signal) => {
+      signal.throwIfAborted();
+      if (!current()) throw uiError("error.page.create_scope");
+      return task(signal);
+    });
+  }
+  async function channelPostText(text: string) {
+    const account = session.activeAccount, generation = messages.accountGeneration, chat = chats.selectedChat;
+    if (!account || !chat?.endsWith("@newsletter")) return false;
+    const current = () => channelCurrent(account, generation, chat);
+    const sent = await channels.postText(account, generation, chat, text, channelEnqueue(account, generation, chat), current);
+    if (!sent || !current()) return false;
+    await refreshChannelAfterPost(account, generation, chat, current);
+    return current();
+  }
+  async function channelPostMedia(file: File, caption: string) {
+    const account = session.activeAccount, generation = messages.accountGeneration, chat = chats.selectedChat;
+    if (!account || !chat?.endsWith("@newsletter")) return false;
+    const current = () => channelCurrent(account, generation, chat);
+    const sent = await channels.postMedia(account, generation, chat, file, caption, channelEnqueue(account, generation, chat), current);
+    if (!sent || !current()) return false;
+    await refreshChannelAfterPost(account, generation, chat, current);
+    return current();
+  }
+  async function channelPostPoll(question: string, options: string[], multi: boolean) {
+    const account = session.activeAccount, generation = messages.accountGeneration, chat = chats.selectedChat;
+    if (!account || !chat?.endsWith("@newsletter")) return false;
+    const current = () => channelCurrent(account, generation, chat);
+    const sent = await channels.postPoll(account, generation, chat, question, options, multi, channelEnqueue(account, generation, chat), current);
+    if (!sent || !current()) return false;
+    await refreshChannelAfterPost(account, generation, chat, current);
+    return current();
+  }
+  async function refreshChannelAfterPost(account: string, generation: number, chat: string, current: () => boolean) {
+    if (!await channels.pageMessages(account, generation, chat, 50, true) || !current()) return;
+    const loaded = await messages.showLatest(chat);
+    if (loaded && current()) scrollToBottom();
+  }
+  async function channelEditPost(message: StoredMessage, text: string) {
+    const account = session.activeAccount, generation = messages.accountGeneration, chat = message.chat;
+    if (!account || chat !== chats.selectedChat || !chat.endsWith("@newsletter")) return false;
+    const current = () => channelCurrent(account, generation, chat);
+    const saved = await channels.editPost(account, generation, chat, message.id, text, channelEnqueue(account, generation, chat), current);
+    if (!saved || !current()) return false;
+    channelEditing = null;
+    const loaded = await messages.reloadMessages(chat);
+    if (loaded && current()) await messages.loadMarks(chat);
+    return current();
+  }
+  async function channelRevokePost(message: StoredMessage) {
+    const account = session.activeAccount, generation = messages.accountGeneration, chat = message.chat;
+    if (!account || chat !== chats.selectedChat || !chat.endsWith("@newsletter")) return false;
+    const current = () => channelCurrent(account, generation, chat);
+    const revoked = await channels.revokePost(account, generation, chat, message.id, channelEnqueue(account, generation, chat), current);
+    if (!revoked || !current()) return false;
+    channelRevoking = null;
+    const loaded = await messages.reloadMessages(chat);
+    if (loaded && current()) await messages.loadMarks(chat);
+    return current();
   }
   let helpSeen = $state(helpDismissed());
   $effect(() => {
@@ -1270,7 +1347,16 @@
 
 
   function menuItems(message: StoredMessage): MenuItem[] {
-    return messageMenuItems(message, openChat);
+    const items = messageMenuItems(message, openChat);
+    const account = session.activeAccount, generation = messages.accountGeneration;
+    if (account && message.chat.endsWith("@newsletter") && channels.permissionFor(account, generation, message.chat) === true
+      && !message.revoked && !message.deleted) {
+      if (!message.media_kind && message.text.trim()) items.push({
+        label: t("channels.edit_post"), icon: "edit", action: () => { channelEditing = message; },
+      });
+      items.push({ label: t("channels.revoke_post"), icon: "trash", danger: true, action: () => { channelRevoking = message; } });
+    }
+    return items;
   }
 
   const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -1792,6 +1878,7 @@
         {@const isChannel = selectedChat.endsWith("@newsletter")}
         {@const channelAccount = session.activeAccount}
         {@const channelGeneration = messages.accountGeneration}
+        {@const channelCanPost = channelAccount ? channels.permissionFor(channelAccount, channelGeneration, selectedChat) : null}
         {@const channel = channels.view?.channels.find((row) => row.jid === selectedChat) ?? (channels.preview?.jid === selectedChat ? channels.preview : null)}
         {@const storedTitle = chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride}
         {@const title = isChannel ? channel?.name || storedTitle || selectedChat : isBroadcastList(selectedChat) ? storedTitle || t("page.broadcast_list") : members.displayName(storedTitle, selectedChat)}
@@ -1834,7 +1921,9 @@
             onunfollow={() => void channels.unfollow(channelAccount, channelGeneration, selectedChat)}
             onmute={(muted) => void channels.setMuted(channelAccount, channelGeneration, selectedChat, muted)}
             onfavorite={(favorite) => void channels.setFavorite(channelAccount, channelGeneration, selectedChat, favorite)} />
-          {#if channels.error}<p role="alert">{channels.error.message}</p>{/if}
+          {#if channels.error}<div role="alert"><p>{channels.error.message}</p>
+            {#if channels.error.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="auto">{channels.error.diagnostic}</pre></details>{/if}
+          </div>{/if}
         {/if}
 
         <div class="list-wrap" id="message-region" role="log" aria-label={t("settings.a11y.live_region")} tabindex="-1">
@@ -2096,7 +2185,15 @@
         {/if}
 
         {#if isChannel}
-          <div class="read-only" role="status">{t("channels.read_only")}</div>
+          {#if channelCanPost === true && channelAccount}
+            <ChannelComposer account={channelAccount} generation={channelGeneration} chat={selectedChat}
+              connected={session.connected} canPost={true} busy={channels.busy === selectedChat} error={channels.error}
+              editing={channelEditing} ontext={channelPostText}
+              onedit={(id, text) => channelEditing?.id === id ? channelEditPost(channelEditing, text) : Promise.resolve(false)}
+              onmedia={channelPostMedia} onpoll={channelPostPoll} oncancelEdit={() => (channelEditing = null)} />
+          {:else}
+            <div class="read-only" role="status">{t(channelCanPost === null ? "channels.checking_role" : "channels.read_only")}</div>
+          {/if}
         {:else if isBroadcastList(selectedChat)}
           <div class="read-only" role="status"><Icon name="volume" size={16} />{broadcastSendReason(selectedChat)}</div>
         {:else if members.chatGroup && !members.chatGroup.can_send}
@@ -2120,6 +2217,18 @@
     </section>
 
   </div>
+{/if}
+
+{#if channelRevoking && channelRevoking.chat === chats.selectedChat && channelRevoking.chat.endsWith("@newsletter")
+  && session.activeAccount && channels.permissionFor(session.activeAccount, messages.accountGeneration, channelRevoking.chat) === true}
+  {@const message = channelRevoking}
+  <ConfirmDialog label={t("channels.revoke_post")} title={t("channels.revoke_question")}
+    hint={channels.error?.message ?? t("channels.revoke_hint")} onclose={() => (channelRevoking = null)}>
+    {#snippet actions()}
+      <button class="danger" disabled={channels.busy === message.chat} onclick={() => void channelRevokePost(message)}>{t("channels.revoke_post")}</button>
+      <button onclick={() => (channelRevoking = null)}>{t("ui.cancel")}</button>
+    {/snippet}
+  </ConfirmDialog>
 {/if}
 </div>
 

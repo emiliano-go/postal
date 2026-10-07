@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-channel-edit-text"
+description = "Enables the channel_edit_text command without any pre-configured scope."
+commands.allow = ["channel_edit_text"]
+
+[[permission]]
+identifier = "deny-channel-edit-text"
+description = "Denies the channel_edit_text command without any pre-configured scope."
+commands.deny = ["channel_edit_text"]

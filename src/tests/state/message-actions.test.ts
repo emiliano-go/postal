@@ -37,6 +37,7 @@ async function withApp(run: (app: {
     patch: (row: StoredMessage) => void;
     refreshRow: (chat: string, id: string, mayAppend: boolean) => Promise<void>;
     reloadMessages: (chat: string) => Promise<boolean>;
+    loadMarks: (chat: string | null) => Promise<void>;
     prepareChat: (chat: string, limit?: number) => void;
     resetAccount: () => void;
     downloadMedia: (chat: string | null, message: StoredMessage) => Promise<void>;
@@ -248,7 +249,7 @@ test("reload coalescing stays within account even for the same chat address", as
   await withApp(async ({ loadEvents, messages, chats, session, ui }) => {
     const { dispatchServiceEvent } = await loadEvents();
     Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => false } });
-    const chat = "same@newsletter", reloads: string[] = [];
+    const chat = "same@newsletter", reloads: string[] = [], marks: string[] = [];
     session.activeAccount = "first-account";
     session.gateDone = true;
     session.settings.notifications_enabled = false;
@@ -256,6 +257,7 @@ test("reload coalescing stays within account even for the same chat address", as
     messages.prepareChat(chat, 50);
     ui.scrolledUp = false;
     messages.reloadMessages = async () => { reloads.push(session.activeAccount!); return true; };
+    messages.loadMarks = async (jid: string | null) => { marks.push(`${session.activeAccount}:${jid}`); };
     const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal: () => true, reconnect: async () => {} };
     await dispatchServiceEvent({ kind: "channelMessagesChanged", jid: chat }, host);
     session.activeAccount = "second-account";
@@ -263,8 +265,43 @@ test("reload coalescing stays within account even for the same chat address", as
     await dispatchServiceEvent({ kind: "channelMessagesChanged", jid: chat }, host);
     await new Promise((resolve) => setTimeout(resolve, 450));
     assert.deepEqual(reloads, ["second-account"]);
+    assert.deepEqual(marks, [`second-account:${chat}`]);
     messages.resetAccount();
   });
+});
+
+test("channel changes refresh an older window and defer poll marks through paging", async () => {
+  await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    const chat = "older@newsletter";
+    session.activeAccount = "channel-window-fixture";
+    chats.selectedChat = chat;
+    messages.prepareChat(chat, 50);
+    messages.atLatest = false;
+    ui.scrolledUp = true;
+    let marks = 0, followed = 0;
+    messages.loadMarks = async () => { marks++; };
+    const host: EventHost = { reconnect: async () => {}, anchor: () => null, reveal: () => true,
+      scrollToBottom: () => { followed++; } };
+    await dispatchServiceEvent({ kind: "channelMessagesChanged", jid: chat }, host);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
+    assert.equal(marks, 1);
+    assert.equal(followed, 0);
+    assert.equal(calls.filter((call) => call.command === "mark_read").length, 0);
+
+    const paging = messages as typeof messages & { loadingOlder: boolean; flushRefresh(chat: string): Promise<void> };
+    paging.loadingOlder = true;
+    await dispatchServiceEvent({ kind: "channelMessagesChanged", jid: chat }, host);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
+    paging.loadingOlder = false;
+    await paging.flushRefresh(chat);
+    assert.equal(calls.filter((call) => call.command === "message_page").length, 2);
+    assert.equal(marks, 2);
+    assert.equal(followed, 0);
+    messages.resetAccount();
+  }, (command) => command === "message_page" ? { messages: [], has_more: false } : undefined);
 });
 
 test("reload restoration cannot override scrolling during an in-flight refresh", async () => {
@@ -670,20 +707,26 @@ test("the group and DM menus offer their entries, dividers never first", async (
   });
 });
 
-test("newsletter posts expose only view, copy, and media menu actions", async () => {
-  await withApp(async ({ menuItems, messages, ui, calls }) => {
+test("newsletter posts expose view, copy, media, and forward menu actions", async () => {
+  await withApp(async ({ menuItems, messages, ui, calls, session, forwardMessages }) => {
+    session.activeAccount = "channel-forward-fixture";
     messages.marks = { ...messages.marks, reactions: [
       { target: "post", sender: "123@s.whatsapp.net", emoji: "👍" },
     ] };
     const post = { chat: "987@newsletter", id: "post", sender: "987@newsletter", from_me: false,
       text: "Caption", media_kind: "image", revoked: false } as StoredMessage;
     const items = menuItems(post, async () => {});
-    assert.deepEqual(labels(items), ["Copy", "Copy Image", "Open Image", "Reactions", "Save Image…"]);
+    assert.deepEqual(labels(items), ["Copy", "Copy Image", "Forward", "Open Image", "Reactions", "Save Image…"]);
     items.find((item) => item.label === "Reactions")!.action();
     assert.equal(ui.reactionsFor, post);
     await items.find((item) => item.label === "Save Image…")!.action();
     assert.deepEqual(calls.at(-1), { command: "message_media_action",
       args: { chat: post.chat, id: post.id, action: "save" } });
+    items.find((item) => item.label === "Forward")!.action();
+    assert.deepEqual(ui.forwarding, [post]);
+    await forwardMessages([post], ["123@s.whatsapp.net"]);
+    assert.deepEqual(calls.filter((call) => call.command === "forward_message").map((call) => call.args),
+      [{ accountId: "channel-forward-fixture", chat: post.chat, id: post.id, to: "123@s.whatsapp.net" }]);
   });
 });
 
@@ -877,17 +920,18 @@ test("picked messages come back in the chat's order, not the pick order", async 
 });
 
 test("forwarding sends every message to every chosen chat, in order", async () => {
-  await withApp(async ({ forwardMessages, ui, calls }) => {
+  await withApp(async ({ forwardMessages, ui, calls, session }) => {
+    session.activeAccount = "forward-fixture";
     const message = (id: string) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage;
     const batch = [message("older"), message("newer")];
     ui.picking = { older: batch[0], newer: batch[1] };
     await forwardMessages(batch, ["x@s", "y@s"]);
     const sent = calls.filter((call) => call.command === "forward_message").map((call) => call.args);
     assert.deepEqual(sent, [
-      { chat: "99@g.us", id: "older", to: "x@s" },
-      { chat: "99@g.us", id: "newer", to: "x@s" },
-      { chat: "99@g.us", id: "older", to: "y@s" },
-      { chat: "99@g.us", id: "newer", to: "y@s" },
+      { accountId: "forward-fixture", chat: "99@g.us", id: "older", to: "x@s" },
+      { accountId: "forward-fixture", chat: "99@g.us", id: "newer", to: "x@s" },
+      { accountId: "forward-fixture", chat: "99@g.us", id: "older", to: "y@s" },
+      { accountId: "forward-fixture", chat: "99@g.us", id: "newer", to: "y@s" },
     ]);
     assert.equal(ui.picking, null, "the selection ends once the batch is out");
     assert.ok(calls.some((call) => call.command === "chats_page"), "the list refreshes");
@@ -946,7 +990,8 @@ test("bulk copy, star and reactions target every selected message without copyin
 
 test("bulk sends stop when account changes, including an in-flight forward batch", async () => {
   let switchAccount = () => {};
-  await withApp(async ({ starMessages, reactMessages, forwardMessages, composer, ui, calls, normalizeError, t }) => {
+  await withApp(async ({ starMessages, reactMessages, forwardMessages, composer, ui, calls, normalizeError, t, session }) => {
+    session.activeAccount = "bulk-fixture";
     const batch = ["a", "b"].map((id) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage);
     ui.picking = { a: batch[0], b: batch[1] };
     switchAccount = () => composer.resetAccount();
@@ -959,6 +1004,22 @@ test("bulk sends stop when account changes, including an in-flight forward batch
     assert.equal(calls.filter((call) => call.command === "forward_message").length, 1);
     assert.equal(Object.keys(ui.picking ?? {}).length, 2);
   }, (command) => { if (command === "star" || command === "react" || command === "forward_message") switchAccount(); });
+});
+
+test("queued forwarding cannot continue through a switched account without queue cancellation", async () => {
+  let switchAccount = () => {};
+  await withApp(async ({ forwardMessages, session, ui, calls }) => {
+    session.activeAccount = "first-account";
+    const batch = ["a", "b"].map((id) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage);
+    const selection = { a: batch[0], b: batch[1] };
+    ui.picking = selection;
+    switchAccount = () => { session.activeAccount = "second-account"; };
+    await assert.rejects(forwardMessages(batch, ["x@s", "y@s"]), /account changed/i);
+    assert.deepEqual(calls.filter((call) => call.command === "forward_message").map((call) => call.args),
+      [{ accountId: "first-account", chat: "99@g.us", id: "a", to: "x@s" }]);
+    assert.equal(ui.picking, selection);
+    assert.equal(calls.filter((call) => call.command === "chats_page").length, 0);
+  }, (command) => { if (command === "forward_message") switchAccount(); });
 });
 
 test("a failed bulk command stops the batch, keeps selection and exposes the failure", async () => {

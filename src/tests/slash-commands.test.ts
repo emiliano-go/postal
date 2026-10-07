@@ -24,6 +24,14 @@ test("fuzzy commands include all seven supported concepts, stable ordering and a
   assert.deepEqual(slashCommands("unknowncommand"), []);
 });
 
+test("every slash command description is localized in English and Arabic", () => {
+  const ids = slashCommands("").map(({ id }) => id);
+  for (const locale of ["en", "ar"]) {
+    const messages = JSON.parse(readFileSync(new URL(`../lib/i18n/locales/${locale}.json`, import.meta.url), "utf8"));
+    for (const id of ids) assert.ok(messages[`content.slash_command_${id.replaceAll("-", "_")}_hint`], `${locale}:${id}`);
+  }
+});
+
 test("command replacement removes only the captured slash token and rejects changed drafts", () => {
   const draft = "Before /gif after", token = slashToken(draft, 11)!;
   assert.equal(replaceSlashToken(draft, token), "Before  after");

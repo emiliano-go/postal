@@ -386,7 +386,7 @@ export class MessagesState {
   private async flushRefresh(chat: string) {
     if (!this.refreshPending || chat !== this.chat) return;
     this.refreshPending = false;
-    await this.reloadMessages(chat);
+    if (await this.reloadMessages(chat) && chat.endsWith("@newsletter")) await this.loadMarks(chat);
   }
 
   resizeWindow(limit: number) {

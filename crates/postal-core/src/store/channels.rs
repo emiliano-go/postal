@@ -116,7 +116,7 @@ impl MessageStore {
         Ok(())
     }
 
-    pub fn insert_channel_message(&self, message: &StoredMessage, revoked: bool) -> Result<Option<bool>> {
+    pub fn insert_channel_message(&self, message: &StoredMessage, revoked: bool, wire_id: Option<&str>) -> Result<Option<bool>> {
         anyhow::ensure!(message.header.chat.ends_with("@newsletter") && message.header.id.starts_with("channel-"),
             "invalid channel message");
         let mut conn = self.conn.lock().unwrap();
@@ -125,6 +125,11 @@ impl MessageStore {
             params![message.header.chat, message.header.id],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?, row.get::<_, bool>(2)?))).optional()?;
         if previous.is_some_and(|(timestamp, was_revoked, _)| was_revoked || timestamp > message.header.timestamp) {
+            if let Some(wire_id) = wire_id.filter(|id| !id.is_empty()) {
+                tx.execute("UPDATE messages SET channel_wire_id=COALESCE(channel_wire_id,?3) WHERE chat=?1 AND id=?2 AND revoked=0",
+                    params![message.header.chat, message.header.id, wire_id])?;
+                tx.commit()?;
+            }
             return Ok(None);
         }
         if revoked {
@@ -146,9 +151,33 @@ impl MessageStore {
                     params![message.header.chat, message.header.id, read])?;
             }
         }
+        if let Some(wire_id) = wire_id.filter(|id| !id.is_empty()) {
+            tx.execute("UPDATE messages SET channel_wire_id=?3 WHERE chat=?1 AND id=?2",
+                params![message.header.chat, message.header.id, wire_id])?;
+        }
+        if revoked || message.media.kind.as_deref() != Some("poll") {
+            tx.execute("DELETE FROM polls WHERE chat=?1 AND id=?2", params![message.header.chat, message.header.id])?;
+            tx.execute("DELETE FROM poll_votes WHERE chat=?1 AND poll=?2", params![message.header.chat, message.header.id])?;
+            tx.execute("DELETE FROM poll_option_hashes WHERE chat=?1 AND id=?2", params![message.header.chat, message.header.id])?;
+        }
         self.revive_chat(&tx, &message.header.chat)?;
         tx.commit()?;
         Ok(Some(previous.is_none()))
+    }
+
+    pub fn channel_wire_id(&self, chat: &str, id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row("SELECT channel_wire_id FROM messages WHERE chat=?1 AND id=?2 AND revoked=0",
+            params![chat, id], |row| row.get(0)).optional()?.flatten())
+    }
+
+    pub fn set_channel_wire_id(&self, chat: &str, id: &str, wire_id: &str) -> Result<()> {
+        anyhow::ensure!(!wire_id.is_empty(), "empty channel wire id");
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute("UPDATE messages SET channel_wire_id=?3 WHERE chat=?1 AND id=?2 AND revoked=0",
+            params![chat, id, wire_id])?;
+        anyhow::ensure!(changed == 1, "channel post is not stored");
+        Ok(())
     }
 }
 
@@ -185,8 +214,18 @@ impl StoreWorker {
         self.run(move |store| store.set_channel_favorite(&jid, favorite)).await
     }
 
-    pub(crate) async fn insert_channel_message(&self, message: StoredMessage, revoked: bool) -> Result<Option<bool>> {
-        self.run(move |store| store.insert_channel_message(&message, revoked)).await
+    pub(crate) async fn insert_channel_message(&self, message: StoredMessage, revoked: bool, wire_id: Option<String>) -> Result<Option<bool>> {
+        self.run(move |store| store.insert_channel_message(&message, revoked, wire_id.as_deref())).await
+    }
+
+    pub(crate) async fn channel_wire_id(&self, chat: &str, id: &str) -> Result<Option<String>> {
+        let (chat, id) = (chat.to_owned(), id.to_owned());
+        self.run(move |store| store.channel_wire_id(&chat, &id)).await
+    }
+
+    pub(crate) async fn set_channel_wire_id(&self, chat: &str, id: &str, wire_id: &str) -> Result<()> {
+        let (chat, id, wire_id) = (chat.to_owned(), id.to_owned(), wire_id.to_owned());
+        self.run(move |store| store.set_channel_wire_id(&chat, &id, &wire_id)).await
     }
 }
 
@@ -227,23 +266,55 @@ mod tests {
         row.header.id = "channel-101".into();
         row.header.timestamp = 10;
         row.text = "first".into();
-        assert_eq!(store.insert_channel_message(&row, false).unwrap(), Some(true));
+        assert_eq!(store.insert_channel_message(&row, false, Some("wire-101")).unwrap(), Some(true));
+        assert_eq!(store.channel_wire_id("1@newsletter", "channel-101").unwrap().as_deref(), Some("wire-101"));
         row.header.timestamp = 9;
         row.text = "stale".into();
-        assert_eq!(store.insert_channel_message(&row, false).unwrap(), None);
-        row.header.timestamp = 11;
+        assert_eq!(store.insert_channel_message(&row, false, Some("wire-stale")).unwrap(), None);
+        assert_eq!(store.channel_wire_id("1@newsletter", "channel-101").unwrap().as_deref(), Some("wire-101"));
+        row.header.timestamp = 10;
         row.text = "edited".into();
         row.local.read = true;
-        assert_eq!(store.insert_channel_message(&row, false).unwrap(), Some(false));
+        assert_eq!(store.insert_channel_message(&row, false, None).unwrap(), Some(false));
+        assert_eq!(store.channel_wire_id("1@newsletter", "channel-101").unwrap().as_deref(), Some("wire-101"));
         let edited = store.message("1@newsletter", "channel-101").unwrap();
         assert_eq!(edited.text, "edited");
         assert!(!edited.local.read);
-        row.header.timestamp = 12;
-        assert_eq!(store.insert_channel_message(&row, true).unwrap(), Some(false));
+        row.header.timestamp = 10;
+        assert_eq!(store.insert_channel_message(&row, true, None).unwrap(), Some(false));
         row.header.timestamp = 13;
-        assert_eq!(store.insert_channel_message(&row, false).unwrap(), None);
+        assert_eq!(store.insert_channel_message(&row, false, None).unwrap(), None);
         let stored = store.message("1@newsletter", "channel-101").unwrap();
         assert!(stored.local.revoked);
         assert_eq!(stored.text, "edited");
+    }
+
+    #[test]
+    fn channel_wire_id_survives_reopen_and_legacy_rows_can_be_filled() {
+        let path = std::env::temp_dir().join(format!("postal-channel-wire-{}-{}.db", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        {
+            let store = MessageStore::open(&path).unwrap();
+            let row = StoredMessage { header: MessageHeader { chat: "1@newsletter".into(), id: "channel-12".into(),
+                timestamp: 10, ..Default::default() }, text: "post".into(), ..Default::default() };
+            store.insert_channel_message(&row, false, Some("wire-12")).unwrap();
+            let mut legacy = row.clone();
+            legacy.header.id = "channel-13".into();
+            store.insert_channel_message(&legacy, false, None).unwrap();
+            legacy.header.timestamp = 9;
+            assert_eq!(store.insert_channel_message(&legacy, false, Some("wire-13")).unwrap(), None);
+            legacy.header.id = "channel-14".into();
+            legacy.header.timestamp = 10;
+            store.insert_channel_message(&legacy, false, None).unwrap();
+        }
+        {
+            let store = MessageStore::open(&path).unwrap();
+            assert_eq!(store.channel_wire_id("1@newsletter", "channel-12").unwrap().as_deref(), Some("wire-12"));
+            assert_eq!(store.channel_wire_id("1@newsletter", "channel-13").unwrap().as_deref(), Some("wire-13"));
+            assert_eq!(store.channel_wire_id("1@newsletter", "channel-14").unwrap(), None);
+            store.set_channel_wire_id("1@newsletter", "channel-14", "wire-14").unwrap();
+            assert_eq!(store.channel_wire_id("1@newsletter", "channel-14").unwrap().as_deref(), Some("wire-14"));
+        }
+        for suffix in ["", "-wal", "-shm", "-journal"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
     }
 }

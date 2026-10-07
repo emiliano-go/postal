@@ -1,6 +1,12 @@
 import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
 import { invoke } from "$lib/utils/ipc";
 import type { ChannelPage, ChannelSummary, ChannelView } from "$lib/utils/wire";
+import { base64Of } from "$lib/utils/files";
+import { cancelStagedAttachment, INLINE_UPLOAD_BYTES, stageAttachment } from "$lib/utils/upload";
+
+type Enqueue = <T>(task: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+type Current = () => boolean;
+type ChannelPermission = { account: string; generation: number; jid: string; canPost: boolean | null };
 
 function lookupTarget(value: string) {
   const target = value.trim();
@@ -17,12 +23,14 @@ export class ChannelsState {
   busy = $state<string | null>(null);
   error = $state<LocalizedError | null>(null);
   lookupError = $state("");
+  permission = $state.raw<ChannelPermission | null>(null);
 
   private account: string | null = null;
   private generation = -1;
   private viewRequest = 0;
   private lookupRequest = 0;
   private actionRequest = 0;
+  private permissionRequest = 0;
   private pageRequests = new Map<string, number>();
   private pageCursors = new Map<string, string | null>();
   private pageMore = new Map<string, boolean>();
@@ -36,6 +44,7 @@ export class ChannelsState {
     this.viewRequest++;
     this.lookupRequest++;
     this.actionRequest++;
+    this.permissionRequest++;
     this.pageRequests.clear();
     this.pageCursors.clear();
     this.pageMore.clear();
@@ -47,6 +56,7 @@ export class ChannelsState {
     this.busy = null;
     this.error = null;
     this.lookupError = "";
+    this.permission = null;
   }
 
   private current(account: string, generation: number) {
@@ -153,18 +163,104 @@ export class ChannelsState {
       (channel) => this.update(channel));
   }
 
-  private async mutate<T>(account: string, generation: number, jid: string, action: () => Promise<T>, apply: (value: T) => void) {
+  permissionFor(account: string, generation: number, jid: string) {
+    const permission = this.permission;
+    return permission?.account === account && permission.generation === generation && permission.jid === jid
+      ? permission.canPost : null;
+  }
+
+  async checkCanPost(account: string, generation: number, jid: string): Promise<boolean | null> {
+    if (!this.current(account, generation)) return null;
+    const request = ++this.permissionRequest;
+    this.permission = { account, generation, jid, canPost: null };
+    this.error = null;
+    try {
+      const canPost = await invoke<boolean>("channel_can_post", { accountId: account, jid });
+      if (!this.current(account, generation) || request !== this.permissionRequest) return null;
+      this.permission = { account, generation, jid, canPost };
+      return canPost;
+    } catch (error) {
+      if (this.current(account, generation) && request === this.permissionRequest) this.error = normalizeError(error);
+      return null;
+    }
+  }
+
+  async postText(account: string, generation: number, jid: string, text: string, enqueue: Enqueue, current: Current = () => true) {
+    if (this.permissionFor(account, generation, jid) !== true || !text.trim()) return false;
+    return this.mutate(account, generation, jid,
+      () => enqueue(async (signal) => {
+        signal.throwIfAborted();
+        if (!this.current(account, generation) || !current()) return;
+        await invoke("channel_post_text", { accountId: account, jid, text });
+      }), () => {}, current);
+  }
+
+  async postMedia(account: string, generation: number, jid: string, file: File, caption: string, enqueue: Enqueue, current: Current = () => true) {
+    if (this.permissionFor(account, generation, jid) !== true) return false;
+    return this.mutate(account, generation, jid,
+      () => enqueue(async (signal) => {
+        signal.throwIfAborted();
+        if (!this.current(account, generation) || !current()) return;
+        if (file.size <= INLINE_UPLOAD_BYTES) {
+          const data = await base64Of(file);
+          signal.throwIfAborted();
+          if (!this.current(account, generation) || !current()) return;
+          await invoke("channel_post_media", { accountId: account, jid, name: file.name, data, caption: caption || null });
+          return;
+        }
+        const upload = await stageAttachment(file, signal, account);
+        try {
+          signal.throwIfAborted();
+          if (!this.current(account, generation) || !current()) return;
+          await invoke("channel_post_media", { accountId: account, jid, name: file.name, upload, caption: caption || null });
+        } finally {
+          await cancelStagedAttachment(upload, account);
+        }
+      }), () => {}, current);
+  }
+
+  async postPoll(account: string, generation: number, jid: string, question: string, options: string[], multi: boolean, enqueue: Enqueue, current: Current = () => true) {
+    if (this.permissionFor(account, generation, jid) !== true || !question.trim() || options.length < 2) return false;
+    return this.mutate(account, generation, jid,
+      () => enqueue(async (signal) => {
+        signal.throwIfAborted();
+        if (!this.current(account, generation) || !current()) return;
+        await invoke("channel_post_poll", { accountId: account, jid, question: question.trim(), options, multi });
+      }), () => {}, current);
+  }
+
+  async editPost(account: string, generation: number, jid: string, id: string, text: string, enqueue: Enqueue, current: Current = () => true) {
+    if (this.permissionFor(account, generation, jid) !== true || !text.trim()) return false;
+    return this.mutate(account, generation, jid,
+      () => enqueue(async (signal) => {
+        signal.throwIfAborted();
+        if (!this.current(account, generation) || !current()) return;
+        await invoke("channel_edit_text", { accountId: account, jid, id, text });
+      }), () => {}, current);
+  }
+
+  async revokePost(account: string, generation: number, jid: string, id: string, enqueue: Enqueue, current: Current = () => true) {
+    if (this.permissionFor(account, generation, jid) !== true) return false;
+    return this.mutate(account, generation, jid,
+      () => enqueue(async (signal) => {
+        signal.throwIfAborted();
+        if (!this.current(account, generation) || !current()) return;
+        await invoke("channel_revoke_post", { accountId: account, jid, id });
+      }), () => {}, current);
+  }
+
+  private async mutate<T>(account: string, generation: number, jid: string, action: () => Promise<T>, apply: (value: T) => void, guard: Current = () => true) {
     if (!account || !this.current(account, generation) || this.busy) return false;
     const request = ++this.actionRequest;
     this.busy = jid;
     this.error = null;
     try {
       const value = await action();
-      if (!this.current(account, generation) || request !== this.actionRequest) return false;
+      if (!this.current(account, generation) || request !== this.actionRequest || !guard()) return false;
       apply(value);
       return true;
     } catch (error) {
-      if (this.current(account, generation) && request === this.actionRequest) this.error = normalizeError(error);
+      if (this.current(account, generation) && request === this.actionRequest && guard()) this.error = normalizeError(error);
       return false;
     } finally {
       if (this.current(account, generation) && request === this.actionRequest) this.busy = null;

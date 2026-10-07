@@ -421,10 +421,17 @@ impl WhatsAppService {
 
     /// Sends a copy of a stored message to another chat.
     pub async fn forward(&self, from_chat: &str, id: &str, to_chat: &str) -> Result<()> {
+        if to_chat.ends_with("@newsletter") { return self.channel_forward_post(from_chat, id, to_chat).await; }
         let to = broadcast_lists::writable_target(to_chat)?;
         let message = self.store.message(from_chat, id).await?;
         anyhow::ensure!(!message.is_unavailable(), MessageRef::new("error.message_unavailable"));
+        anyhow::ensure!(!message.local.deleted && !message.local.revoked, "source message cannot be forwarded");
         anyhow::ensure!(!message.spoiler, MessageRef::new("error.message_spoiler_forward"));
+        if from_chat.ends_with("@newsletter") && message.media.kind.as_deref() == Some("poll") {
+            let poll = self.marks_for(from_chat, &[id.to_owned()]).await?.polls.into_iter()
+                .find(|poll| poll.id == id).ok_or_else(|| anyhow::anyhow!("channel poll definition unavailable"))?;
+            return self.create_poll(to_chat, &poll.name, poll.options, poll.multi).await;
+        }
         // Uncaptioned media is stored as `[kind]`, which must not become a caption.
         let placeholder = message.media.kind.as_ref().map(|kind| format!("[{kind}]"));
         let text = message.text.trim();

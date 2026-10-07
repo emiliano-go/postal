@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-channel-can-post"
+description = "Enables the channel_can_post command without any pre-configured scope."
+commands.allow = ["channel_can_post"]
+
+[[permission]]
+identifier = "deny-channel-can-post"
+description = "Denies the channel_can_post command without any pre-configured scope."
+commands.deny = ["channel_can_post"]

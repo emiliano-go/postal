@@ -49,6 +49,7 @@ export const channelsFixture = {
   view: { channels: [] as ChannelSummary[], synced_at: null } as ChannelView,
   metadata: {} as Record<string, ChannelSummary>,
   pages: {} as Record<string, ChannelPage>,
+  canPost: {} as Record<string, boolean>,
   calls: [] as { command: string; args?: Record<string, unknown> }[],
   failure: "",
   defer: "",
@@ -72,13 +73,16 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   previewFixture.calls.push(command);
-  if (["channels", "refresh_channels", "channel_metadata", "follow_channel", "unfollow_channel", "set_channel_muted", "set_channel_favorite", "channel_messages"].includes(command)) {
+  if (["channels", "refresh_channels", "channel_metadata", "follow_channel", "unfollow_channel", "set_channel_muted", "set_channel_favorite", "channel_messages",
+    "channel_can_post", "channel_post_text", "channel_post_media", "channel_post_poll", "channel_edit_text", "channel_revoke_post"].includes(command)) {
     channelsFixture.calls.push({ command, args });
     const complete = () => {
       if (channelsFixture.failure === command) throw new Error(`Synthetic ${command} failure`);
       const jid = String(args?.jid ?? "");
       const stored = channelsFixture.view.channels.find((channel) => channel.jid === jid);
       if (command === "channels" || command === "refresh_channels") return channelsFixture.view as T;
+      if (command === "channel_can_post") return (channelsFixture.canPost[jid] ?? false) as T;
+      if (["channel_post_text", "channel_post_media", "channel_post_poll", "channel_edit_text", "channel_revoke_post"].includes(command)) return undefined as T;
       if (command === "channel_metadata") {
         const channel = channelsFixture.metadata[jid];
         if (!channel) throw new Error("Synthetic channel not found");

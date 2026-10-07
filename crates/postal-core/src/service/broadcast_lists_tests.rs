@@ -16,6 +16,8 @@ fn writable_target_blocks_only_non_status_broadcast_lists() {
     ] {
         assert_eq!(writable_target(chat).unwrap().to_string(), chat);
     }
+    assert_eq!(writable_target("123@newsletter").unwrap_err().to_string(),
+        "Use the channel publishing workflow for channel posts.");
     assert!(writable_target("bad").is_err());
 }
 

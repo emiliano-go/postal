@@ -423,7 +423,15 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::history_pins::migrate_multiple,
     super::history_pins::migrate_rank,
     super::channels::migrate,
+    migrate_channel_wire_id,
 ];
+
+fn migrate_channel_wire_id(conn: &Connection) -> Result<()> {
+    if !table_columns(conn, "messages")?.iter().any(|column| column == "channel_wire_id") {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN channel_wire_id TEXT;")?;
+    }
+    Ok(())
+}
 
 fn migrate_generated_system(conn: &Connection) -> Result<()> {
     if !table_columns(conn, "messages")?.iter().any(|column| column == "generated_system") {
@@ -462,6 +470,7 @@ pub(super) fn ensure_optional_columns(conn: &Connection) -> Result<()> {
             ("album_request_written", "INTEGER NOT NULL DEFAULT 0 CHECK(album_request_written IN (0,1))"),
             ("generated_system", "INTEGER CHECK(generated_system IN (0,1))"),
             ("download_error", "TEXT"),
+            ("channel_wire_id", "TEXT"),
         ] {
             if !messages.iter().any(|c| c == name) {
                 conn.execute_batch(&format!("ALTER TABLE messages ADD COLUMN {name} {declaration};"))?;

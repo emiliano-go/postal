@@ -210,12 +210,17 @@ pub(crate) async fn report_message(state: State<'_, AppState>, chat: String, id:
 #[tauri::command]
 pub(crate) async fn forward_message(
     state: State<'_, AppState>,
+    account_id: String,
     chat: String,
     id: String,
     to: String,
 ) -> CommandResult<()> {
-    let service = state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?;
-    service.forward(&chat, &id, &to).await.map_err(|e| { service.note_error(&e); CommandError::from(e) })
+    let service = state.account_service(&account_id)?;
+    let result = service.forward(&chat, &id, &to).await;
+    if !std::sync::Arc::ptr_eq(&service, &state.account_service(&account_id)?) {
+        return Err(CommandError::code("error.account_changed"));
+    }
+    result.map_err(|e| { service.note_error(&e); CommandError::from(e) })
 }
 
 #[tauri::command(async)]

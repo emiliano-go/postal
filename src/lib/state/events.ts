@@ -140,21 +140,23 @@ function queueMarkRead(chat: string) {
 }
 
 /** The same for the open chat; `markRead` marks what arrived as seen if the window has focus. */
-let messagesQueued: { chat: string; follow: boolean; markRead: boolean; account: string | null; generation: number } | null = null;
+let messagesQueued: { chat: string; follow: boolean; markRead: boolean; refreshMarks: boolean; account: string | null; generation: number } | null = null;
 function queueReloadMessages(
   host: EventHost,
   chat: string | null,
   follow: boolean,
   markRead: boolean,
+  refreshMarks = false,
 ) {
   if (!chat) return;
   const account = session.activeAccount, generation = messages.accountGeneration;
   if (messagesQueued?.chat === chat && messagesQueued.account === account && messagesQueued.generation === generation) {
     messagesQueued.follow ||= follow;
     messagesQueued.markRead ||= markRead;
+    messagesQueued.refreshMarks ||= refreshMarks;
     return;
   }
-  const queued = (messagesQueued = { chat, follow, markRead, account, generation });
+  const queued = (messagesQueued = { chat, follow, markRead, refreshMarks, account, generation });
   setTimeout(async () => {
     if (messagesQueued === queued) messagesQueued = null;
     const current = () => account === session.activeAccount && generation === messages.accountGeneration && chats.selectedChat === queued.chat;
@@ -165,6 +167,10 @@ function queueReloadMessages(
     const anchor = host.anchor();
     const loaded = await messages.reloadMessages(queued.chat);
     if (!loaded || !current()) return;
+    if (queued.refreshMarks) {
+      await messages.loadMarks(queued.chat);
+      if (!current()) return;
+    }
     const restored = anchor ? host.reveal(anchor) : true;
     // Decide the follow at fire time: the reader may have scrolled up while
     // the reload was in flight, and must not be yanked back down.
@@ -483,8 +489,8 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       if (session.activeAccount) void channels.load(session.activeAccount, messages.accountGeneration);
       break;
     case "channelMessagesChanged":
-      if (payload.jid === chats.selectedChat && messages.atLatest && !messages.loadingOlder) {
-        queueReloadMessages(host, payload.jid, true, true);
+      if (payload.jid === chats.selectedChat) {
+        queueReloadMessages(host, payload.jid, messages.atLatest, messages.atLatest, true);
       }
       break;
     case "syncHealthChanged": {

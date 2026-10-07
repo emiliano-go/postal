@@ -22,6 +22,7 @@ pub fn writable_target(chat: &str) -> Result<Jid> {
         !target.is_broadcast_list(),
         "Sending to broadcast lists is not supported."
     );
+    anyhow::ensure!(!target.is_newsletter(), "Use the channel publishing workflow for channel posts.");
     Ok(target)
 }
 

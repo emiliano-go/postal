@@ -29,6 +29,9 @@
     return active && input && input.selectionStart === token.end && input.selectionEnd === token.end
       && input.value.slice(token.start, token.end) === token.raw;
   }
+  function description(command: SlashCommandId) {
+    return t(`content.slash_command_${command.replaceAll("-", "_")}_hint`);
+  }
   function choose(command: SlashCommandId) {
     if (!current() || !owner || disabled[command]) return;
     onchoose({ command, token: { ...token }, ...owner });
@@ -69,7 +72,7 @@
         aria-selected={command.id === selected} class:active={command.id === selected}
         onmousedown={(event) => event.preventDefault()} onmouseenter={() => { const at = enabled.findIndex((option) => option.id === command.id); if (at >= 0) index = at; }}
         onclick={() => choose(command.id)}>
-        <span class="name">/{command.id}</span><span>{disabled[command.id] ?? command.description}</span>
+        <span class="name">/{command.id}</span><span>{disabled[command.id] ?? description(command.id)}</span>
       </button>
     {/each}
     {#if options.length === 0}<p>{t("content.no_commands_match")}{token.query}.</p>{/if}
