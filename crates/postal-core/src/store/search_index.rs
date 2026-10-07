@@ -99,7 +99,11 @@ pub(super) fn candidate(query: &str) -> Option<String> {
         }
     }
     if query.len() - start > best.len() { best = &query[start..]; }
-    (best.len() >= 3).then(|| format!("%{}%", best.to_ascii_lowercase()))
+    (best.len() >= 3).then(|| {
+        let literal = query.bytes().all(|byte| byte.is_ascii_graphic() || byte == b' ')
+            && !query.bytes().any(|byte| matches!(byte, b'%' | b'_' | b'\\'));
+        format!("%{}%", if literal { query.to_ascii_lowercase() } else { best.to_ascii_lowercase() })
+    })
 }
 
 pub(super) fn clause(conn: &Connection, query: &str, parameter: usize, links: bool) -> Result<(String, Option<String>)> {
@@ -317,12 +321,14 @@ mod tests {
             ("kelvin", "KOO", ""), ("dotted", "İstanbul", ""), ("greek", "Σύνολο", ""),
             ("literal", "100%_\\ complete", ""), ("link", "", "[\"https://only.synthetic.test\"]"),
             ("nul", "a\0NEEDLE", ""),
+            ("phrase", "Message number 49999", ""),
         ] {
             conn.execute("INSERT INTO messages(chat,id,sender,timestamp,from_me,text,link_urls)
                 VALUES ('a@s',?1,'peer@s',1,0,?2,?3)", params![id, body, links]).unwrap();
         }
         drop(conn);
-        let queries = ["mañana", "canción", "ana", "مرحبا", "KOO", "İstanbul", "Σύ", "100%_\\", "only.synthetic", "NEEDLE", "ne", "%", "_"];
+        let queries = ["mañana", "Mañana canción", "canción", "ana", "مرحبا", "KOO", "İstanbul", "Σύ",
+            "100%_\\", "100%_\\ complete", "only.synthetic", "ONLY.SYNTHETIC", "NEEDLE", "number 49999", "ne", "%", "_"];
         let indexed = queries.iter().map(|query| store.search_messages("a@s", query, 50).unwrap()
             .into_iter().map(|message| message.header.id).collect::<Vec<_>>()).collect::<Vec<_>>();
         let highlights = [vec!["koo".into()], vec!["needle".into()], vec!["mañana".into()]];
@@ -341,5 +347,23 @@ mod tests {
             assert_eq!(store.keyword_matches(None, false, terms, &[]).unwrap().into_iter()
                 .map(|message| message.header.id).collect::<Vec<_>>(), hit);
         }
+    }
+
+    #[test]
+    fn ascii_phrase_candidate_narrows_common_word_before_final_match() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        let conn = store.conn.lock().unwrap();
+        conn.execute_batch("WITH RECURSIVE fixture(n) AS (SELECT 0 UNION ALL SELECT n+1 FROM fixture WHERE n<999)
+            INSERT INTO messages(chat,id,sender,timestamp,from_me,text)
+            SELECT 'a@s',CAST(n AS TEXT),'peer@s',n,0,'message number '||n FROM fixture;").unwrap();
+        assert!(available(&conn).unwrap());
+        let candidate = candidate("number 999").unwrap();
+        assert_eq!(candidate, "%number 999%");
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM message_search WHERE text LIKE ?1", [&candidate], |row| row.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let broad: i64 = conn.query_row("SELECT COUNT(*) FROM message_search WHERE text LIKE '%number%'", [], |row| row.get(0)).unwrap();
+        assert_eq!(broad, 1000);
+        drop(conn);
+        assert_eq!(store.search_messages("a@s", "number 999", 50).unwrap()[0].header.id, "999");
     }
 }
