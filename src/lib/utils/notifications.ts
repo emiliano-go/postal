@@ -2,7 +2,7 @@
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { invoke } from "@tauri-apps/api/core";
 import { plain } from "./format.ts";
-import { MEDIA_LABELS, captionOf } from "./message.ts";
+import { MEDIA_LABELS, captionOf, locationPreview } from "./message.ts";
 import type { StoredMessage } from "./models.ts";
 import { t } from "../i18n/localizer.ts";
 import { playNotificationSound } from "./notification-sound.ts";
@@ -74,6 +74,7 @@ export function notificationBody(
   if (kind === "event") return `📅 ${plain(text, mentionName)}`.trim();
   if (kind === "view_once") return t("state.view_once");
   if (kind === "missed_call") return t("state.missed_call");
+  if (kind === "location" || kind === "live_location") return plain(locationPreview(kind, text), mentionName).trim();
   if (kind && text.trim() === `[${kind}]`) return MEDIA_LABELS[kind] ?? t("state.attachment");
   const body = plain(text || captionOf(message as StoredMessage), mentionName).trim();
   if (body) return body.length > 300 ? `${body.slice(0, 297)}…` : body;
@@ -175,7 +176,7 @@ export async function showChatNotification(
 /** Pings once from the settings test button. Never throws. */
 export async function sendTestNotification(): Promise<void> {
   try {
-    await sendNotification({ title: "Postal", body: "Notifications are on." });
+    await sendNotification({ title: t("ui.app_name"), body: t("state.notifications_test") });
   } catch {
     // Best-effort only.
   }

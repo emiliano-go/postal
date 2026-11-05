@@ -50,7 +50,7 @@
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder={t("content.search_starred_messages")} bind:value={query} autofocus />
+      <input dir="auto" placeholder={t("content.search_starred_messages")} bind:value={query} autofocus />
     </label>
     <ul>
       {#if items === null}

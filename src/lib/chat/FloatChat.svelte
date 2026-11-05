@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t, formatDate, formatNumber } from "$lib/i18n/localizer";
+  import { displayName, mentionLabel } from "$lib/utils/phone";
   import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { tick } from "svelte";
   import { blocks, type Inline } from "$lib/utils/format";
@@ -70,18 +71,18 @@
   {/if}
 {/snippet}
 
-{#snippet runs(nodes: Inline[])}
+{#snippet runs(nodes: Inline[], jids?: readonly string[])}
   {#each nodes as node}
     {#if node.kind === "text"}{node.text}
     {:else if node.kind === "link"}{node.url}
-    {:else if node.kind === "mention"}<span class="mention">@{node.user}</span>
+    {:else if node.kind === "mention"}<span class="mention">@{mentionLabel(node.user, jids)}</span>
     {:else if node.kind === "code"}<code>{node.text}</code>
-    {:else if node.kind === "bold"}<strong>{@render runs(node.children)}</strong>
-    {:else if node.kind === "italic"}<em>{@render runs(node.children)}</em>
-    {:else}<s>{@render runs(node.children)}</s>{/if}
+    {:else if node.kind === "bold"}<strong>{@render runs(node.children, jids)}</strong>
+    {:else if node.kind === "italic"}<em>{@render runs(node.children, jids)}</em>
+    {:else}<s>{@render runs(node.children, jids)}</s>{/if}
   {/each}
 {/snippet}
-{#snippet lines(items: Inline[][])}{#each items as line, index}{#if index}<br />{/if}{@render runs(line)}{/each}{/snippet}
+{#snippet lines(items: Inline[][], jids?: readonly string[])}{#each items as line, index}{#if index}<br />{/if}{@render runs(line, jids)}{/each}{/snippet}
 
 <main class="float-chat" style:--float-alpha={`${Math.max(0, Math.min(1, opacity)) * 100}%`}>
   <header><h1><bdi>{context?.title ?? t("chat.float_title")}</bdi></h1><button type="button" disabled={closing} aria-label={t("chat.float_close")} onclick={() => void onclose()}>×</button></header>
@@ -100,17 +101,17 @@
     {:else if !rows.length}<p>{t("chat.stored_empty")}</p>
     {:else if !visibleRows.length}<p>{t("chat.keywords_all_hidden")}</p>{/if}
     <ol>{#each visibleRows as message (message.id)}
-      {@const content = floatContent(message)}
+      {@const content = floatContent(message, (user) => mentionLabel(user, message.mentioned_jids))}
       <li class:mine={message.from_me} class:notice={content.notice} class:keyword-highlighted={keywordHighlighted(message, rules)}>
-        <b><bdi>{message.from_me ? t("chat.you") : message.sender_name || message.sender || t("chat.sender_unknown")}</bdi></b>
+        <b><bdi>{message.from_me ? t("chat.you") : message.sender ? displayName(message.sender_name, message.sender) : message.sender_name || t("chat.sender_unknown")}</bdi></b>
         {#if content.media}<span class="media">{content.media}</span>{/if}
         <div class="text" dir="auto">
           {#each blocks(content.notice || (message.media_kind === "view_once" || !!message.media_once_kind) || message.spoiler ? content.text : message.text.trim() === `[${message.media_kind}]` ? "" : message.text) as block}
             {#if block.kind === "pre"}<pre>{block.text}</pre>
-            {:else if block.kind === "quote"}<blockquote>{@render lines(block.lines)}</blockquote>
-            {:else if block.kind === "list"}{#if block.ordered}<ol>{#each block.items as item}<li>{@render runs(item)}</li>{/each}</ol>
-              {:else}<ul>{#each block.items as item}<li>{@render runs(item)}</li>{/each}</ul>{/if}
-            {:else}<p>{@render lines(block.lines)}</p>{/if}
+            {:else if block.kind === "quote"}<blockquote>{@render lines(block.lines, message.mentioned_jids)}</blockquote>
+            {:else if block.kind === "list"}{#if block.ordered}<ol>{#each block.items as item}<li>{@render runs(item, message.mentioned_jids)}</li>{/each}</ol>
+              {:else}<ul>{#each block.items as item}<li>{@render runs(item, message.mentioned_jids)}</li>{/each}</ul>{/if}
+            {:else}<p>{@render lines(block.lines, message.mentioned_jids)}</p>{/if}
           {/each}
         </div>
         <time>{time(message.timestamp)}</time>

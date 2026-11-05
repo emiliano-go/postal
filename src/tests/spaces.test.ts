@@ -207,7 +207,7 @@ test("real SSR renders nested navigation, ten picker kinds and authoritative una
       snapshot: { spaces: [root, { ...root, id: "child", parent_id: "root", name: "Child" }], items }, selected: { kind: "unsorted" },
       onselect: () => {}, onaction: async () => { throw new Error("SSR must not mutate"); } } }).body;
     assert.ok(tree.includes('aria-label="Spaces"') && tree.includes('aria-expanded="true"') && tree.includes("Child"));
-    assert.ok(/<button[^>]*aria-selected="true"[^>]*>[\s\S]*?Unsorted/.test(tree) && !tree.includes("Export metadata") && !tree.includes("Import metadata"));
+    assert.ok(/<button[^>]*aria-pressed="true"[^>]*>[\s\S]*?Unsorted/.test(tree) && !tree.includes("Export metadata") && !tree.includes("Import metadata"));
     delete (globalThis as Record<string, unknown>).localStorage;
     // With no saved state the nav renders collapsed by default.
     const collapsedTree = render(await load("SpacesTree"), { props: { account: "a", generation: 1,

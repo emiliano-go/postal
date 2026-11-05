@@ -257,7 +257,7 @@ async function notifyForMessage(message: StoredMessage, fresh: boolean, mute?: {
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
   const senderName = message.from_me ? t("chat.you") : notifySenderName(message);
-  const preview = notificationBody({ ...message, media_kind: message.media_once_kind ? "view_once" : message.media_kind }, (user) => members.mentionName(user));
+  const preview = notificationBody({ ...message, media_kind: message.media_once_kind ? "view_once" : message.media_kind }, (user) => members.mentionName(user, message.mentioned_jids));
   const title = notificationTitle({ isGroup, chatName, senderName });
   const body = isGroup ? groupNotificationBody(senderName, preview) : preview;
   notificationHistory.record(account, {
@@ -392,7 +392,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       // A dropped connection spends any code in flight.
       session.clearPairCode();
       try {
-        announceStatus("Disconnected", session.gateDone);
+        announceStatus(t("a11y.disconnected"), session.gateDone);
       } catch {
         // Announcements must never break event handling.
       }
@@ -474,11 +474,12 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
             ?? members.displayName(null, chat);
           if (payload.kind === "message") {
             const m = payload.message;
-            const preview = (m.text ?? "").trim()
-              || (m.media_kind ? (m.media_kind === "audio" ? "Voice message" : m.media_kind) : "New message");
+            // The notification preview: media placeholders, spoilers and
+            // view-once read as labels, never as their stored text.
+            const preview = notificationBody({ ...m, media_kind: m.media_once_kind ? "view_once" : m.media_kind }, (user) => members.mentionName(user, m.mentioned_jids));
             announceMessage(chatName, preview.slice(0, 220), gateReady, { mention: !!m.mentioned });
           } else {
-            announceMessage(chatName, "New message", gateReady);
+            announceMessage(chatName, t("state.new_message"), gateReady);
           }
         } catch {
           // Announcements must never break event handling.
@@ -571,7 +572,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
           session.finalizing = false;
           flushDeferred(host);
           try {
-            announceStatus("Sync complete", true);
+            announceStatus(t("a11y.sync_complete"), true);
           } catch {
             // Announcements must never break event handling.
           }

@@ -108,7 +108,7 @@
         <span class="subject">{info?.subject ?? message?.text ?? t("content.whatsapp_group")}</span>
         <span class="meta">
           {#if info}
-          {t("content.member_count", { count: info.size })}{#if info.created_at}{t("content.created")} {localeDate((new Date(info.created_at * 1000)).getTime()/1000, { dateStyle: "short" })}{/if}
+          {t("content.member_count", { count: info.size })}{#if info.created_at}{" "}{t("content.created")} {localeDate((new Date(info.created_at * 1000)).getTime()/1000, { dateStyle: "short" })}{/if}
           {:else}{t("content.group_invitation")}{/if}
         </span>
       </div>

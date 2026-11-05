@@ -2,6 +2,7 @@
   import { formatDate as localeDate } from "$lib/i18n/localizer";
   import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { t } from "$lib/i18n/localizer";
+  import { displayName } from "$lib/utils/phone";
   import { notificationHistory } from "./history-store";
   import type { NotificationHistoryEntry } from "./history";
 
@@ -51,8 +52,8 @@
       <ol>
         {#each entries as entry (JSON.stringify([entry.chat, entry.id]))}
           <li><button type="button" class="entry" disabled={busy !== null} onclick={() => jump(entry)}>
-            <span class="heading"><strong><bdi dir="auto">{entry.title || entry.chat_name || entry.chat}</bdi></strong><time datetime={new Date(entry.timestamp).toISOString()}>{localeDate((new Date(entry.timestamp)).getTime()/1000, { dateStyle: "medium", timeStyle: "short" })}</time></span>
-            <span class="metadata">{t("content.chat_f7iyqr")} <bdi dir="auto">{entry.chat_name || entry.chat}</bdi> {t("content.sender")} <bdi dir="auto">{entry.sender_name || entry.sender || t("content.unknown_sender")}</bdi></span>
+            <span class="heading"><strong><bdi dir="auto">{entry.title || displayName(entry.chat_name, entry.chat)}</bdi></strong><time datetime={new Date(entry.timestamp).toISOString()}>{localeDate((new Date(entry.timestamp)).getTime()/1000, { dateStyle: "medium", timeStyle: "short" })}</time></span>
+            <span class="metadata">{t("content.chat_f7iyqr")} <bdi dir="auto">{displayName(entry.chat_name, entry.chat)}</bdi> {t("content.sender")} <bdi dir="auto">{entry.sender ? displayName(entry.sender_name, entry.sender) : entry.sender_name || t("content.unknown_sender")}</bdi></span>
             <span class="body"><bdi dir="auto">{entry.body}</bdi></span>
           </button></li>
         {/each}

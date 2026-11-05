@@ -4,6 +4,7 @@ import { createServer } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { fileURLToPath } from "node:url";
 import type { ContactIdentity } from "../lib/utils/wire";
+import { t } from "../lib/i18n/localizer.ts";
 
 test("stored identity overrides stale labels in all name paths and ignores old-account lookups", async () => {
   const server = await createServer({ configFile: false, plugins: [svelte({ configFile: false })],
@@ -53,13 +54,22 @@ test("stored identity overrides stale labels in all name paths and ignores old-a
     members.forgetUnresolvedNames(); await settle("77@lid");
     const unsaved = members.displayName("Saved stale", "77@lid");
     assert.ok(unsaved.includes("+598 91954564")); assert.ok(unsaved.endsWith("· ~Push"));
-    assert.equal(members.senderLabel({ sender: "77@lid", sender_name: "Saved stale" }), unsaved);
+    // Inside a conversation the name is enough; the number stays on the profile card.
+    assert.equal(members.senderLabel({ sender: "77@lid", sender_name: "Saved stale" }), "~Push");
+    assert.equal(members.senderName("77@lid"), "~Push");
+    assert.equal(members.mentionTarget("77").name, "Push");
     current = { ...saved, contact_saved: false, saved_name: null, number: null, username: "only_username" };
     members.forgetUnresolvedNames(); await settle("88000000000000@lid");
     assert.equal(members.displayName("Push", "88000000000000@lid"), "@only_username");
     assert.equal(members.mentionTarget("88000000000000").name, "only_username");
     assert.equal(plain("Hello @88000000000000", (user: string) => members.mentionName(user)), "Hello @only_username");
-    assert.equal(members.mentionTarget("138947158093828").name, "138947158093828");
+    assert.equal(members.mentionTarget("138947158093828").name, t("chat.unknown_contact"));
+    // The message's own mention list settles which address the digits are.
+    const { phoneLabel } = await load("../lib/utils/phone.ts");
+    assert.deepEqual(members.mentionTarget("59899000111", ["59899000111@s.whatsapp.net"]),
+      { jid: "59899000111@s.whatsapp.net", name: phoneLabel("59899000111"), self: false });
+    assert.deepEqual(members.mentionTarget("59899000112", ["59899000112:7@lid"]),
+      { jid: "59899000112@lid", name: t("chat.unknown_contact"), self: false });
 
     members.forgetUnresolvedNames();
     current = saved;

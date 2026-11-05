@@ -1,7 +1,7 @@
 // Small message display helpers shared by the page and the message views.
 // Moved out of +page.svelte.
 import type { StoredMessage } from "./models";
-import { t, formatDate, formatRelative, formatTime as localeTime } from "../i18n/localizer.ts";
+import { t, formatDate, formatTime as localeTime } from "../i18n/localizer.ts";
 
 /** An SVG file sent as a document, which is drawn in place like a picture. */
 export function isSvg(m: StoredMessage) {
@@ -41,8 +41,9 @@ export function dayLabel(ts: number) {
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
-  if (day.toDateString() === today.toDateString()) return formatRelative(0, "day");
-  if (day.toDateString() === yesterday.toDateString()) return formatRelative(-1, "day");
+  // Catalog labels, not Intl relative text: English Intl gives lowercase "today".
+  if (day.toDateString() === today.toDateString()) return t("chat.date_today");
+  if (day.toDateString() === yesterday.toDateString()) return t("chat.date_yesterday");
   return formatDate(ts, {
     day: "numeric",
     month: "long",
@@ -55,6 +56,30 @@ export function formatTime(seconds: number) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/**
+ * Compact timestamp for list rows: the time today, then "Yesterday", the
+ * weekday within the past week, and a short date beyond that.
+ */
+export function listStamp(seconds: number, now = new Date()) {
+  const day = new Date(seconds * 1000);
+  const age = Math.round(
+    (Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(day.getFullYear(), day.getMonth(), day.getDate())) / 86_400_000,
+  );
+  if (age <= 0) return formatTime(seconds);
+  if (age === 1) return t("chat.date_yesterday");
+  if (age < 7) return formatDate(seconds, { weekday: "short" });
+  return formatDate(seconds, { dateStyle: "short" });
+}
+
+/**
+ * What a location share says beyond its position: the stored text without
+ * the maps link, or "Location" / "Live location" when nothing is left.
+ */
+export function locationPreview(kind: "location" | "live_location", text: string) {
+  const caption = text.split("\n").filter((line) => !line.startsWith("https://maps.google.com")).join("\n").trim();
+  return caption || t(kind === "location" ? "state.location" : "state.live_location");
 }
 
 function labels(keys: Record<string, string>): Record<string, string> {

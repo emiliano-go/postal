@@ -89,6 +89,9 @@ test("bodies preview text and label uncaptioned media", () => {
   assert.equal(notificationBody({ text: "[audio]", media_kind: "audio" }), "Audio");
   assert.equal(notificationBody({ text: "look", media_kind: "image" }), "look");
   assert.equal(notificationBody({ text: "Missed call", media_kind: "missed_call" }), "Missed call");
+  assert.equal(notificationBody({ text: "https://maps.google.com/?q=1,2", media_kind: "location" }), "Location");
+  assert.equal(notificationBody({ text: "Cafe\nhttps://maps.google.com/?q=1,2", media_kind: "location" }), "Cafe");
+  assert.equal(notificationBody({ text: "", media_kind: "live_location" }), "Live location");
   assert.equal(notificationBody({ text: "", media_kind: "sticker" }), "Sticker");
   assert.equal(
     groupNotificationBody("Ana", "hello"),

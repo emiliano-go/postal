@@ -22,6 +22,7 @@
   } from "$lib/utils/theme.svelte";
 
   const themeLabel = (candidate: Theme) => isBuiltIn(candidate) ? tr(`settings.theme_builtin_${candidate.id}`) : candidate.name;
+  const copyName = (candidate: Theme) => tr("settings.theme_copy_name", { name: themeLabel(candidate) });
   const groups = [...new Set(TOKENS.map((t) => t.group))];
   const ACCENTS = ["#00a884", "#53bdeb", "#7f66ff", "#e26ab6", "#f0b232", "#f15c6d"];
   const MOTION: [string, string][] = [
@@ -51,7 +52,7 @@
 
   /** Built-in themes stay pristine: the first edit forks a copy. */
   function editable(): Theme {
-    return builtIn ? duplicate(theme) : theme;
+    return builtIn ? duplicate(theme, copyName(theme)) : theme;
   }
 
   function setTokens(values: Record<string, string>) {
@@ -249,7 +250,7 @@
         oninput={(e) => (theme.name = e.currentTarget.value)} />
     {/if}
     <span class="spacer"></span>
-    <Button variant="ghost" onclick={() => duplicate(theme)}><Icon name="copy" size={14} /> {tr("settings.theme_duplicate")}</Button>
+    <Button variant="ghost" onclick={() => duplicate(theme, copyName(theme))}><Icon name="copy" size={14} /> {tr("settings.theme_duplicate")}</Button>
     <Button variant="ghost" onclick={() => exportTheme("json")}>{copied === "json" ? tr("ui.copied") : tr("ui.export")}</Button>
     <Button variant="ghost" onclick={() => exportTheme("css")}>{copied === "css" ? tr("settings.css_copied") : tr("settings.css_copy")}</Button>
     <Button variant="ghost" active={importing} onclick={() => (importing = !importing)}>{tr("ui.import")}</Button>

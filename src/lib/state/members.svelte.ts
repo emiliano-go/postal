@@ -124,7 +124,7 @@ export class MembersState {
     // resolves both, so it rescues senders whose name is keyed by the other.
     const own = message.sender_name;
     const known = own && !isPlaceholder(own) ? own : this.memberOf(message.sender)?.name;
-    return this.displayName(known && !isPlaceholder(known) ? known : own, message.sender);
+    return this.displayName(known && !isPlaceholder(known) ? known : own, message.sender, true);
   }
 
   /** Resolves a JID to a known name, falling back to the bare address. */
@@ -132,7 +132,7 @@ export class MembersState {
     const b = bare(jid);
     const known = this.senderNames.get(b);
     const member = this.memberOf(jid)?.name;
-    return this.displayName(known && !isPlaceholder(known) ? known : (member ?? known), jid);
+    return this.displayName(known && !isPlaceholder(known) ? known : (member ?? known), jid, true);
   }
 
   /** Author shown on a quote; our own messages read "You". */
@@ -142,12 +142,12 @@ export class MembersState {
   }
 
   /** Resolves a label using stored contact provenance. */
-  displayName(name: string | null | undefined, jid: string) {
+  displayName(name: string | null | undefined, jid: string, compact = false) {
     const key = bare(jid);
     if (key.endsWith("@lid") || key.endsWith("@s.whatsapp.net")) {
       this.requestName(key);
       const identity = this.identities[key];
-      if (identity) return phoneName(name, key, identity);
+      if (identity) return phoneName(name, key, identity, compact);
     }
     if (!name || isPlaceholder(name)) {
       const learned = this.learnedNames[key];
@@ -216,8 +216,12 @@ export class MembersState {
     return jid === "@me" || this.ownForms.has(bare(jid));
   }
 
-  /** Who an `@<user>` token names: us, a group member, or whichever address form the core knows. */
-  mentionTarget(user: string): { jid: string; name: string; self: boolean } {
+  /**
+   * Who an `@<user>` token names: us, a group member, or whichever address
+   * form the core knows. `jids` is the message's own mention list, when it
+   * was stored: it says exactly which address the digits belong to.
+   */
+  mentionTarget(user: string, jids?: readonly string[]): { jid: string; name: string; self: boolean } {
     const own = session.me ? bare(session.me) : null;
     // The address map already keys members by local part and number, so the
     // per-mention scan over the roster is not needed.
@@ -230,23 +234,38 @@ export class MembersState {
       // A push name seen on any of their messages here beats the member list's bare number.
       const spoken = this.memberNames.get(member.jid);
       const named = spoken ?? (isPlaceholder(member.name) ? null : member.name);
-      return { jid: member.jid, name: this.displayName(named, member.jid).replace(/^@/, ""), self: false };
+      return { jid: member.jid, name: this.displayName(named, member.jid, true).replace(/^[@~]/, ""), self: false };
     }
-    // Cached names only: one message can mention hundreds of numbers, and a
-    // lookup for each would flood the core and lag the whole app.
+    // The message names the address: a phone number reads as one at once, a
+    // LID is looked up and never shown as its digits.
+    const exact = jids?.map(bare).find((jid) => jid.split("@")[0] === user);
+    if (exact) return { jid: exact, name: this.displayName(null, exact, true).replace(/^[@~]/, ""), self: false };
+    // Not in the open chat's roster (a hover preview shows another chat, or
+    // the person left). The digits alone may be a LID or a phone number.
     const lid = `${user}@lid`;
     const pn = `${user}@s.whatsapp.net`;
     const lidName = this.learnedNames[lid];
-    if (this.identities[lid]) return { jid: lid, name: phoneName(lidName, lid, this.identities[lid]).replace(/^@/, ""), self: false };
-    if (this.identities[pn]) return { jid: pn, name: phoneName(this.learnedNames[pn], pn, this.identities[pn]).replace(/^@/, ""), self: false };
-    const lidKnown = !!lidName && !/^\d+$/.test(lidName);
-    return lidKnown
-      ? { jid: lid, name: phoneName(lidName, lid).replace(/^@/, ""), self: false }
-      : { jid: pn, name: user, self: false };
+    const lidIdentity = this.identities[lid], pnIdentity = this.identities[pn];
+    if (lidIdentity && (lidIdentity.number || lidIdentity.saved_name || lidIdentity.legacy_name || lidIdentity.push_name || lidIdentity.username)) {
+      return { jid: lid, name: phoneName(lidName, lid, lidIdentity, true).replace(/^[@~]/, ""), self: false };
+    }
+    // A phone-form lookup always echoes the digits as its number, so it only
+    // proves a real number when something else is known about it.
+    if (pnIdentity && (pnIdentity.contact_saved != null || pnIdentity.saved_name || pnIdentity.legacy_name || pnIdentity.push_name || pnIdentity.username)) {
+      return { jid: pn, name: phoneName(this.learnedNames[pn], pn, pnIdentity, true).replace(/^[@~]/, ""), self: false };
+    }
+    if (!!lidName && !/^\d+$/.test(lidName)) return { jid: lid, name: phoneName(lidName, lid).replace(/^@/, ""), self: false };
+    // Look both forms up: requests are deduplicated and batched into one local
+    // read, and the core asks the server once about LIDs it cannot name. The
+    // mention redraws when an answer arrives; until then it never reads as the
+    // bare identifier.
+    this.requestName(lid);
+    this.requestName(pn);
+    return { jid: pn, name: t("chat.unknown_contact"), self: false };
   }
 
-  mentionName(user: string) {
-    return this.mentionTarget(user).name;
+  mentionName(user: string, jids?: readonly string[]) {
+    return this.mentionTarget(user, jids).name;
   }
 
   /**
@@ -308,7 +327,7 @@ export class MembersState {
     if (message.spoiler) return t("state.spoiler_preview");
     // Media stores a "[image]" style placeholder when it has no caption.
     if (message.text && !message.text.startsWith("[")) {
-      return plain(message.text, (user) => this.mentionName(user));
+      return plain(message.text, (user) => this.mentionName(user, message.mentioned_jids));
     }
     switch (message.media_kind) {
       case "image":
@@ -409,7 +428,7 @@ export class MembersState {
     if (who.length > 1) return t(`state.people_${mode}`, { count: who.length });
     const person = this.memberOf(who[0].sender);
     const name = person && !isPlaceholder(person.name) ? person.name : null;
-    return t(`state.person_${mode}`, { name: this.displayName(name, who[0].sender) });
+    return t(`state.person_${mode}`, { name: this.displayName(name, who[0].sender, true) });
   }
 
   async loadChatGroup(chat: string, isCurrent: () => boolean) {

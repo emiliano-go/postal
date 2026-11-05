@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
-  import { t, formatNumber } from "$lib/i18n/localizer";
+  import { t } from "$lib/i18n/localizer";
   import Icon from "$lib/ui/Icon.svelte";
   import Button from "$lib/ui/Button.svelte";
   import type { CallRecord } from "$lib/utils/wire";
@@ -115,7 +115,7 @@
           </li>
         {/each}
       </ol>
-      {#if loading}<p class="status" role="status">{t("calls.refreshing", { count: formatNumber(visibleRecords.length) })}</p>{/if}
+      {#if loading}<p class="status" role="status">{t("calls.refreshing", { count: visibleRecords.length })}</p>{/if}
     </div>
   {/if}
 </section>

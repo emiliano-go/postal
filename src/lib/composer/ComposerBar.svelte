@@ -503,6 +503,7 @@
   <textarea
     bind:this={composerInput}
     value={draft}
+    dir="auto"
     {disabled}
     onbeforeinput={(event) => { if (!disabled) onbeforeinput(event); }}
     oninput={(event) => { if (disabled) return; oninput(event); dismissedSlash = null; updateCaret(); }}
@@ -666,6 +667,7 @@
       <span class="pending-name"><bdi dir="auto">{previewItem.file.name}</bdi></span>
       <input
         class="caption"
+        dir="auto"
         value={previewItem.caption}
         oninput={(e) => previewItem && (previewItem.caption = e.currentTarget.value)}
         placeholder={t("content.add_a_caption")}

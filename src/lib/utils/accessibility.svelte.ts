@@ -8,6 +8,8 @@
  * a setting is `"system"`.
  */
 
+import { t } from "../i18n/localizer.ts";
+
 export type TriState = "off" | "on" | "system";
 export type TargetSize = "comfortable" | "large";
 export type AnnounceMode = "off" | "concise" | "detailed";
@@ -424,18 +426,18 @@ function emit(text: string, assertive = false) {
 export function announceMessage(sender: string, preview: string, gateReady: boolean, opts?: { mention?: boolean }) {
   const mode = effectiveAnnouncements();
   if (mode === "off" || !gateReady) return;
-  const who = sender.trim() || "Unknown chat";
-  const what = preview.trim().slice(0, 220) || "New message";
+  const name = sender.trim() || t("a11y.unknown_chat");
+  const text = preview.trim().slice(0, 220) || t("state.new_message");
   if (mode === "concise" && !opts?.mention) {
-    emit(`New message from ${who}`);
+    emit(t("state.new_message_from", { name }));
   } else {
-    emit(opts?.mention ? `Mention from ${who}: ${what}` : `New message from ${who}: ${what}`);
+    emit(t(opts?.mention ? "a11y.mention_from" : "a11y.message_from_body", { name, text }));
   }
 }
 
 export function announceTyping(sender: string, gateReady: boolean) {
   if (effectiveAnnouncements() !== "detailed" || !gateReady || !sender.trim()) return;
-  emit(`${sender.trim()} is typing`);
+  emit(t("state.person_typing", { name: sender.trim() }));
 }
 
 export function announceStatus(text: string, gateReady: boolean, assertive = false) {
@@ -445,8 +447,16 @@ export function announceStatus(text: string, gateReady: boolean, assertive = fal
 
 /** Meaningful alt text for media: sender + media kind + caption. */
 export function mediaAltText(sender: string, kind: string, caption: string | null | undefined): string {
-  const who = sender.trim() || "Unknown sender";
-  const what = { image: "photo", video: "video", gif: "GIF", audio: "voice message", sticker: "sticker", document: "document" }[kind] ?? kind;
+  const name = sender.trim() || t("content.unknown_sender");
   const cap = (caption ?? "").trim();
-  return cap ? `${who} sent ${what}: ${cap.slice(0, 220)}` : `${who} sent ${what}`;
+  return cap
+    ? t("a11y.media_sent_caption", { name, kind: mediaKindLabel(kind), caption: cap.slice(0, 220) })
+    : t("a11y.media_sent", { name, kind: mediaKindLabel(kind) });
+}
+
+const MEDIA_KINDS = ["image", "video", "gif", "audio", "sticker", "document"] as const;
+
+/** Spoken name of a media kind; unknown kinds are read as-is. */
+export function mediaKindLabel(kind: string): string {
+  return (MEDIA_KINDS as readonly string[]).includes(kind) ? t(`a11y.kind_${kind as (typeof MEDIA_KINDS)[number]}`) : kind;
 }

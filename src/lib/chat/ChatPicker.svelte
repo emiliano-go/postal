@@ -76,7 +76,7 @@
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder={t("chat.search")} bind:value={query} autofocus />
+      <input dir="auto" placeholder={t("chat.search")} bind:value={query} autofocus />
     </label>
     {#if failed}<p class="error">{failed}</p>{/if}
     <ul>

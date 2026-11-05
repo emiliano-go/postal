@@ -79,6 +79,8 @@ impl WhatsAppService {
             whatsapp_rust::SendOptions::default().with_message_id(&scheduled.id)).await?;
         let mut stored = self.own_message(&scheduled.chat, &scheduled.id, scheduled.text.clone(), "", self.is_self_jid(&to));
         stored.history_shareable = super::group_history::is_shareable_text(&result.message);
+        stored.mentioned_jids = super::message_decode::message_context(&result.message)
+            .map(|context| context.mentioned_jid.clone()).unwrap_or_default();
         self.store.insert_message(&stored).await
             .with_context(|| MessageRef::new("error.scheduled_delivery_uncertain"))?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));

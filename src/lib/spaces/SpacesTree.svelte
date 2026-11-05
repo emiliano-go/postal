@@ -202,8 +202,8 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   {#if !navCollapsed}
     <p class="muted">{t("spaces.local_hint")}</p>
     <div class="defaults">
-      <Button variant="chip" selected={selected.kind === "all"} disabled={disabled} onclick={() => onselect({ kind: "all" })}>{t("nav.all")}</Button>
-      <Button variant="chip" selected={selected.kind === "unsorted"} disabled={disabled} onclick={() => onselect({ kind: "unsorted" })}>{t("spaces.unsorted")}</Button>
+      <Button variant="chip" tab={false} selected={selected.kind === "all"} pressed={selected.kind === "all"} disabled={disabled} onclick={() => onselect({ kind: "all" })}>{t("nav.all")}</Button>
+      <Button variant="chip" tab={false} selected={selected.kind === "unsorted"} pressed={selected.kind === "unsorted"} disabled={disabled} onclick={() => onselect({ kind: "unsorted" })}>{t("spaces.unsorted")}</Button>
     </div>
     {@render branch(null)}
     {#if loading && !snapshot.spaces.length}<p role="status">{t("spaces.loading")}</p>

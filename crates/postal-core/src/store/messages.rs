@@ -13,10 +13,10 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
       media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted,
-      mentioned_all_only, album, generated_system)
+      mentioned_all_only, album, generated_system, mentioned_jids)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42, ?43, ?44)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42, ?43, ?44, ?45)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -61,6 +61,7 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind),
       live_location = COALESCE(excluded.live_location, live_location),
       album = COALESCE(album, excluded.album),
+      mentioned_jids = COALESCE(excluded.mentioned_jids, mentioned_jids),
       history_shareable = MIN(history_shareable, excluded.history_shareable),
       spoiler = MAX(spoiler, excluded.spoiler),
       deleted = MAX(deleted, excluded.deleted),
@@ -178,6 +179,7 @@ impl MessageStore {
                 message.local.mentioned_all_only as i32,
                 message.album.as_ref().map(serde_json::to_string).transpose()?,
                 generated,
+                (!message.mentioned_jids.is_empty()).then(|| serde_json::to_string(&message.mentioned_jids)).transpose()?,
             ],
         )?;
         if message.is_unavailable() || message.is_hidden_tombstone() {

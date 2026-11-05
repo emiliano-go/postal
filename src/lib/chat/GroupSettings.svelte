@@ -114,7 +114,7 @@
         <button disabled={disabled || !subject.trim() || Array.from(subject).length > 100 || subject === (settings.subject ?? "")}
           onclick={() => change({ kind: "subject", text: subject }, "group.name")}>{t("group.name_save")}</button></div>
     {/if}
-    <label>{t("group.description")}<textarea rows="4" value={description} disabled={!settings.can_edit_info || disabled}
+    <label>{t("group.description")}<textarea rows="4" dir="auto" value={description} disabled={!settings.can_edit_info || disabled}
       oninput={(event) => description = event.currentTarget.value}></textarea></label>
     {#if settings.can_edit_info}
       <div class="actions"><span>{Array.from(description).length}/2048</span>

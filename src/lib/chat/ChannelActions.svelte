@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ChannelSummary } from "$lib/utils/wire";
-  import { formatNumber, t } from "$lib/i18n/localizer";
+  import { t } from "$lib/i18n/localizer";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
 
@@ -42,11 +42,11 @@
     </div>
   {:else}
     <section class="channel-actions" aria-label={t("channels.header_details")}>
-      <Avatar src={channel.picture_url} label={channel.name || channel.jid} seed={channel.jid} cls="channel-avatar" />
+      <Avatar src={channel.picture_url} label={channel.name || t("chat.unnamed_channel")} seed={channel.jid} cls="channel-avatar" />
       <div class="details">
-        <strong>{channel.name || channel.jid}</strong>
+        <strong>{channel.name || t("chat.unnamed_channel")}</strong>
         {#if channel.description}<p>{channel.description}</p>{/if}
-        <span>{t("channels.subscribers", { count: formatNumber(channel.subscriber_count) })}</span>
+        <span>{t("channels.subscribers", { count: channel.subscriber_count })}</span>
       </div>
       <div class="actions">
         <Button variant="icon" icon="star" pressed={channel.favorite} aria-label={t(channel.favorite ? "channels.unfavorite" : "channels.favorite")}
