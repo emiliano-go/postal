@@ -2,6 +2,7 @@
   QR pairing card. Moved out of +page.svelte. -->
 <script lang="ts">
   import { t, formatNumber } from "$lib/i18n/localizer";
+  import { locale } from "$lib/i18n/locale.svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
@@ -111,7 +112,7 @@
               <strong><bdi>{account.label}</bdi></strong>
               <small>{phoneName(null, account.jid!)}</small>
             </span>
-            <Icon name="chevronRight" size={16} />
+            <Icon name={locale.dir === "rtl" ? "chevronLeft" : "chevronRight"} size={16} />
           </button>
         {/each}
       </div>

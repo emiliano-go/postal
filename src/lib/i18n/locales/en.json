@@ -7,7 +7,10 @@
   "calls.loading": "Loading calls…",
   "calls.choose_account": "Choose an account to view calls.",
   "calls.empty": "No calls to show.",
-  "calls.refreshing": "Refreshing {count} calls…",
+  "calls.refreshing": {
+    "one": "Refreshing {count} call…",
+    "other": "Refreshing {count} calls…"
+  },
   "calls.undated_hint": "Call dates and durations are unavailable.",
   "calls.incoming": "Incoming",
   "calls.outgoing": "Outgoing",
@@ -43,7 +46,10 @@
   "channels.unfollow": "Unfollow",
   "channels.mute": "Mute channel",
   "channels.unmute": "Unmute channel",
-  "channels.subscribers": "{count} subscribers",
+  "channels.subscribers": {
+    "one": "{count} subscriber",
+    "other": "{count} subscribers"
+  },
   "channels.synced": "Updated",
   "channels.offline_cached": "Offline · showing saved channels",
   "channels.loading": "Loading channels…",
@@ -1721,7 +1727,10 @@
   "error.settings_message_navigation_unavailable": "Message navigation is unavailable.",
   "error.settings_account_changed": "Account changed.",
   "page.latest": "Latest",
-  "page.latest_unread": "Latest, {count} unread messages",
+  "page.latest_unread": {
+    "one": "Latest, {count} unread message",
+    "other": "Latest, {count} unread messages"
+  },
   "page.community_read_only": "This is a community. People talk in its groups; announcements go to its announcement group.",
   "page.announcements_admin_only": "Only admins can send messages to this community's announcements.",
   "page.group_admin_only": "Only admins can send messages here.",
@@ -2273,7 +2282,10 @@
   "content.select_loaded_messages": "Select loaded messages",
   "content.no_responses_received": "No responses received.",
   "content.stop": "Stop",
-  "content.submitted_files": "{count} file(s) submitted. Delivery is tracked in the conversation.",
+  "content.submitted_files": {
+    "one": "{count} file submitted. Delivery is tracked in the conversation.",
+    "other": "{count} files submitted. Delivery is tracked in the conversation."
+  },
   "content.sending": "Sending…",
   "content.upload_progress": "Uploading, {percent}%",
   "content.take_photo": "Take photo",
@@ -3081,5 +3093,29 @@
   "content.crop_area": "Crop area",
   "content.use_full_image": "Full image",
   "labels.show_tags": "Show tags",
-  "labels.hide_tags": "Hide tags"
+  "labels.hide_tags": "Hide tags",
+  "a11y.message_from_body": "New message from {name}: {text}",
+  "a11y.mention_from": "Mention from {name}: {text}",
+  "a11y.unknown_chat": "Unknown chat",
+  "a11y.disconnected": "Disconnected",
+  "a11y.sync_complete": "Sync complete",
+  "a11y.media_sent": "{name} sent {kind}",
+  "a11y.media_sent_caption": "{name} sent {kind}: {caption}",
+  "a11y.kind_image": "photo",
+  "a11y.kind_video": "video",
+  "a11y.kind_gif": "GIF",
+  "a11y.kind_audio": "voice message",
+  "a11y.kind_sticker": "sticker",
+  "a11y.kind_document": "document",
+  "state.location": "Location",
+  "state.live_location": "Live location",
+  "state.notifications_test": "Notifications are on.",
+  "channels.channel": "Channel",
+  "content.download_document": "Download document",
+  "settings.theme_copy_name": "{name} copy",
+  "nav.favorites_empty": "No favorite chats. Use Add to favorites in a chat's menu.",
+  "nav.label_empty": "No chats have this label.",
+  "chat.unnamed_group": "Unnamed group",
+  "chat.unnamed_channel": "Unnamed channel",
+  "chat.unknown_contact": "Unknown contact"
 }

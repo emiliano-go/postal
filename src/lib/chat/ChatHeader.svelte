@@ -2,6 +2,7 @@
   jump-to-mention pill and the pinned-message bar. Moved out of +page.svelte. -->
 <script lang="ts">
   import { t } from "$lib/i18n/localizer";
+  import { locale } from "$lib/i18n/locale.svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
@@ -134,6 +135,7 @@
         iconSize={18}
         title={t("chat.options")}
         aria-label={t("chat.options")}
+        aria-haspopup="menu"
         aria-expanded={optionsOpen}
         onclick={toggleOptions}>⋯</Button>
       {#if optionsOpen}
@@ -174,12 +176,15 @@
     if (optionsOpen && !(e.target as Element).closest?.(".options-wrap")) closeOptions();
   }}
   onkeydown={(e) => {
-    if (e.key === "Escape") closeOptions();
+    if (e.key !== "Escape" || !optionsOpen) return;
+    const inMenu = !!(e.target as Element | null)?.closest?.(".options-menu");
+    closeOptions();
+    if (inMenu) document.querySelector<HTMLButtonElement>(".options-wrap > button")?.focus();
   }} />
 
 {#if pinned}
   <div class="pinned-bar" role="group" aria-label={t("chat.pinned_messages")}>
-    <Button variant="icon" icon="chevronLeft" iconSize={16} title={t("chat.previous_pin")} aria-label={t("chat.previous_pin")} disabled={pinned.count < 2} onclick={onpinnedprevious} />
+    <Button variant="icon" icon={locale.dir === "rtl" ? "chevronRight" : "chevronLeft"} iconSize={16} title={t("chat.previous_pin")} aria-label={t("chat.previous_pin")} disabled={pinned.count < 2} onclick={onpinnedprevious} />
     <button class="pinned-body" title={t("chat.pinned_position", { index: pinned.position, count: pinned.count })}
       aria-describedby="pinned-message-position" onclick={() => onpinnedjump(pinned.id)}>
       <Icon name="pin" size={16} />
@@ -189,7 +194,7 @@
       </span>
     </button>
     <span class="pin-position" id="pinned-message-position" aria-live="polite">{t("chat.pinned_position", { index: pinned.position, count: pinned.count })}</span>
-    <Button variant="icon" icon="chevronRight" iconSize={16} title={t("chat.next_pin")} aria-label={t("chat.next_pin")} disabled={pinned.count < 2} onclick={onpinnednext} />
+    <Button variant="icon" icon={locale.dir === "rtl" ? "chevronLeft" : "chevronRight"} iconSize={16} title={t("chat.next_pin")} aria-label={t("chat.next_pin")} disabled={pinned.count < 2} onclick={onpinnednext} />
   </div>
 {/if}
 

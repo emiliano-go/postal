@@ -160,7 +160,7 @@
     /** Scroll metrics from the virtual list, so the route can follow and page. */
     onscroll: (state: { offset: number; distance: number; viewport: number }) => void;
     toWire: (text: string) => string;
-    targetOf: (user: string) => MentionTarget;
+    targetOf: (user: string, jids?: readonly string[]) => MentionTarget;
     onprofile: (jid: string, name: string, event: MouseEvent, self?: boolean) => void;
     onopenurl: (url: string) => void;
     onopenchat?: (chat: string) => void | Promise<void>;

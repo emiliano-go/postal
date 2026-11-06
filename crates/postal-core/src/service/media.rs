@@ -179,6 +179,7 @@ impl WhatsAppService {
         let thumb = self.outgoing_thumbnail(kind, input).await?;
         let warning = missing_preview_warning(kind, &thumb);
         let context = self.media_context(&to, reply.as_ref(), forwarded, mentions).await?;
+        let mentioned_jids = context.as_ref().map(|context| context.mentioned_jid.clone()).unwrap_or_default();
         let voice_seconds = voice.as_ref().map(|note| note.seconds);
         let mut message = build_media_message(
             file_name, kind, upload, &caption, mimetype, &thumb, context, gif, voice, extension == "ogg",
@@ -196,10 +197,11 @@ impl WhatsAppService {
         } else {
             self.keep_sent_copy(input, &result.message_id, &extension).await
         };
-        let stored = self.record_sent_media(
+        let mut stored = self.record_sent_media(
             chat, &chat_jid, &result.message_id, caption.unwrap_or_default(), kind, to_self,
             view_once, stored_path, locator, voice_seconds, reply.as_ref(),
         ).await?;
+        stored.mentioned_jids = mentioned_jids;
         let stored = self.store.insert_message_row(&stored).await?;
         let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(warning)

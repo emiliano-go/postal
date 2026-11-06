@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import { t } from "$lib/i18n/localizer";
+  import { locale } from "$lib/i18n/locale.svelte";
   import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { onMount, untrack } from "svelte";
   import { fly } from "svelte/transition";
@@ -548,7 +549,7 @@
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder={t("content.find_the_perfect_emoji")} bind:value={query} autofocus />
+      <input dir="auto" placeholder={t("content.find_the_perfect_emoji")} bind:value={query} autofocus />
     </label>
     <div class="emoji-body">
       {#if !query.trim()}
@@ -626,7 +627,7 @@
         {#if openPack}
           {@const pack = openPack}
           <div class="pack-head">
-            <button class="pack-back" title={t("content.all_packs")} onclick={() => { ++packRequest; packLoading = false; packError = ""; openPack = null; }}><Icon name="chevronLeft" size={15} /></button>
+            <button class="pack-back" title={t("content.all_packs")} onclick={() => { ++packRequest; packLoading = false; packError = ""; openPack = null; }}><Icon name={locale.dir === "rtl" ? "chevronRight" : "chevronLeft"} size={15} /></button>
             <span class="pack-name">{pack.pack.name ?? pack.pack.publisher ?? t("content.sticker_pack")}</span>
             {#if pack.stickers.length > 0}
               <button
@@ -692,7 +693,7 @@
               {#each lib.packs as pack (pack.pack_id)}
                 <button class="pack-chip" title={pack.publisher ?? t("content.pack")} onclick={() => openPackView(pack)}>
                   {#if pack.tray_path}<img src={convertFileSrc(pack.tray_path)} alt="" />{/if}
-                  <span>{pack.name ?? pack.pack_id.slice(0, 8)}</span>
+                  <span>{pack.name ?? pack.publisher ?? t("content.sticker_pack")}</span>
                 </button>
               {/each}
             </div>

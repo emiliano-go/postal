@@ -17,6 +17,8 @@
     active = false,
     /** Filter-chip selection; also drives aria-selected for chips. */
     selected = false,
+    /** Chips are tabs by default; false renders a plain button outside a tablist. */
+    tab = true,
     /** Toggled state; also drives aria-pressed for icon buttons. */
     pressed,
     /** Filter-chip trailing count, shown only when set. */
@@ -33,6 +35,7 @@
     iconSize?: number;
     active?: boolean;
     selected?: boolean;
+    tab?: boolean;
     pressed?: boolean;
     count?: number | string;
     danger?: boolean;
@@ -45,7 +48,7 @@
   const on = $derived(active || selected);
   /** Chips are tabs; the tab role carries aria-selected, plain buttons must not have it. */
   const selectAttrs = $derived<{ role?: string; "aria-selected"?: boolean }>(
-    variant === "chip" ? { role: "tab", "aria-selected": selected } : {},
+    variant === "chip" && tab ? { role: "tab", "aria-selected": selected } : {},
   );
 </script>
 

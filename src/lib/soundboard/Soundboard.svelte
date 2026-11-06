@@ -85,7 +85,7 @@
     <fieldset disabled={busy}>
       <legend>{editing ? t("content.edit_clip") : t("content.add_an_audio_clip")}</legend>
       {#if !editing}<label>{t("content.audio_file")}<input type="file" accept={SOUND_FILE_ACCEPT} onchange={choose} /></label>{/if}
-      <label>{t("content.clip_name")}<input bind:value={name} maxlength="64" /></label>
+      <label>{t("content.clip_name")}<input dir="auto" bind:value={name} maxlength="64" /></label>
       <label>{t("content.optional_shortcut")}<select bind:value={slot}><option value={null}>{t("content.none")}</option>{#each [1,2,3,4,5,6,7,8,9] as value}<option value={value}>{soundShortcutLabel(value)}</option>{/each}</select></label>
       <div class="actions"><button type="button" onclick={() => void save()}>{editing ? t("content.save_changes") : t("content.save_clip")}</button>{#if editing}<button type="button" onclick={reset}>{t("content.cancel_edit")}</button>{/if}</div>
     </fieldset>

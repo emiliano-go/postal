@@ -453,7 +453,13 @@ sender_name: string | null, text: string,
 /**
  * The last position of a live location, updated in place as edits arrive.
  */
-live_location: LiveLocation | null, album?: Album, chat: string, id: string, sender: string, timestamp: number, from_me: boolean,
+live_location: LiveLocation | null, album?: Album,
+/**
+ * The full addresses a message mentions (`mentioned_jid`), in wire order.
+ * The text only carries `@<digits>`, which alone cannot tell a LID from a
+ * phone number. Empty for rows stored before it was kept.
+ */
+mentioned_jids?: Array<string>, chat: string, id: string, sender: string, timestamp: number, from_me: boolean,
 /**
  * `image`, `video`, `audio`, `document`, `sticker`, `gif`, `poll`, `event`…
  */

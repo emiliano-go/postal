@@ -110,10 +110,15 @@ async fn incoming_media_captions_keep_wire_mentions_through_storage() {
         assert!(stored.media.locator.is_some());
         stored.local.mentioned = mentions_me(&wire, &["12345@lid".into()]);
         assert!(stored.local.mentioned);
+        assert_eq!(stored.mentioned_jids, vec!["12345@lid".to_string()]);
         store.insert_message(&stored).unwrap();
         let saved = store.message("group@g.us", &index.to_string()).unwrap();
         assert_eq!(saved.text, caption);
         assert!(saved.local.mentioned);
+        assert_eq!(saved.mentioned_jids, vec!["12345@lid".to_string()]);
+        // A replay that lost the list keeps the stored one.
+        store.insert_message(&StoredMessage { mentioned_jids: Vec::new(), ..stored }).unwrap();
+        assert_eq!(store.message("group@g.us", &index.to_string()).unwrap().mentioned_jids, vec!["12345@lid".to_string()]);
     }
     let empty = wa::Message { image_message: MessageField::some(Default::default()), ..Default::default() };
     let stored = stored_message(&empty, MessageHeader::default(), None, None, false).await.unwrap();

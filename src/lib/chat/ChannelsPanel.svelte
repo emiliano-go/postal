@@ -117,8 +117,8 @@
         {#each rows as channel (channel.jid)}
           <article class="row">
             <button type="button" class="open" disabled={!channel.followed || opening !== ""} onclick={() => void open(channel)}>
-              <Avatar src={channel.picture_url} label={channel.name || channel.jid} seed={channel.jid} cls="avatar" />
-              <span class="summary"><strong>{channel.name || channel.jid}</strong><small>{channel.description || channel.jid}</small></span>
+              <Avatar src={channel.picture_url} label={channel.name || t("chat.unnamed_channel")} seed={channel.jid} cls="avatar" />
+              <span class="summary"><strong>{channel.name || t("chat.unnamed_channel")}</strong>{#if channel.description}<small>{channel.description}</small>{/if}</span>
             </button>
             <ChannelActions compact channel={channel} busy={channels.busy === channel.jid} disabled={!connected}
               onfollow={() => action(channel, "follow")} onunfollow={() => action(channel, "unfollow")}

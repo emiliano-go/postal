@@ -149,7 +149,7 @@
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input {placeholder} bind:value={query} oninput={typed} autofocus />
+      <input dir="auto" {placeholder} bind:value={query} oninput={typed} autofocus />
     </label>
     {#if ondatejump}
       <form class="date-jump" onsubmit={(event) => { event.preventDefault(); void jumpDate(); }}>

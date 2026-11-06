@@ -5,7 +5,7 @@ import { invoke } from "$lib/utils/ipc";
 import type { ChatPage } from "$lib/utils/wire";
 import { mergeSummaries } from "$lib/utils/chat-list";
 import { plain } from "$lib/utils/format";
-import { bare, MEDIA_LABELS } from "$lib/utils/message";
+import { bare, locationPreview, MEDIA_LABELS } from "$lib/utils/message";
 import type { IconName } from "$lib/ui/Icon.svelte";
 import type {
   Account,
@@ -92,7 +92,7 @@ export class ChatsState {
   /** Who sent a chat's last message, as the list prefixes it. */
   previewAuthor(chat: ChatSummary) {
     if (chat.last_from_me) return t("chat.you");
-    if (!chat.chat.endsWith("@g.us") || chat.last_media_kind === "missed_call") return null;
+    if (!chat.chat.endsWith("@g.us") || chat.last_media_kind === "missed_call" || !chat.last_sender) return null;
     return members.displayName(chat.last_sender_name, chat.last_sender);
   }
 
@@ -103,6 +103,9 @@ export class ChatsState {
     if (kind === "event") return `📅 ${chat.last_text}`;
     if (kind === "view_once") return t("state.view_once");
     if (kind === "missed_call") return t("state.missed_call");
+    if (kind === "location" || kind === "live_location") {
+      return plain(locationPreview(kind, chat.last_text), (user) => members.mentionName(user));
+    }
     if (!kind || chat.last_text.trim() !== `[${kind}]`) {
       return plain(chat.last_text, (user) => members.mentionName(user));
     }

@@ -106,7 +106,7 @@
   {#if showPacks && library}
     {#if library.catalog_complete !== true}<p class="muted">{t("content.this_cache_contains_known_shared_packs_it_does_not_verify_the_phone_s_fu")}</p>{/if}
     {#if library.packs.length === 0}<p class="muted">{t("content.no_known_shared_packs_in_this_account_s_cache")}</p>
-    {:else}<ul>{#each library.packs as pack (pack.pack_id)}<li>{pack.name ?? pack.publisher ?? pack.pack_id}</li>{/each}</ul>{/if}
+    {:else}<ul>{#each library.packs as pack (pack.pack_id)}<li>{pack.name ?? pack.publisher ?? t("content.sticker_pack")}</li>{/each}</ul>{/if}
   {/if}
 </section>
 

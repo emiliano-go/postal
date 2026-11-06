@@ -180,7 +180,7 @@ export type BubbleCtx = {
 /** Page-owned helpers and actions the bubble calls back into. */
 export type BubbleApi = {
   toWire: (text: string) => string;
-  targetOf: (user: string) => MentionTarget;
+  targetOf: (user: string, jids?: readonly string[]) => MentionTarget;
   avatarOf: (jid: string) => string | null;
   onprofile: (jid: string, name: string, event: MouseEvent, self?: boolean) => void;
   onopenurl: (url: string) => void;

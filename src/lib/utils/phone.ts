@@ -1,4 +1,5 @@
 import type { ContactIdentity } from "./wire";
+import { t } from "../i18n/localizer.ts";
 
 // ITU calling codes. They are prefix-free, so the longest match is the country.
 // +1 is shared by 25 countries (NANP); telling them apart needs the
@@ -55,26 +56,68 @@ export function isPlaceholder(name: string): boolean {
 }
 
 /**
- * A name for someone, falling back to their number with its country when no
- * name is known. Only phone JIDs carry a number; a LID is left as it is.
+ * What to show for an address nothing readable is known about. Internal
+ * identifiers (LIDs, group, channel and list ids) mean nothing to a person,
+ * so they read as what the address is instead.
  */
-export function displayName(name: string | null | undefined, jid: string, identity?: ContactIdentity): string {
+export function unnamedLabel(jid: string): string {
+  if (jid.endsWith("@g.us")) return t("chat.unnamed_group");
+  if (jid.endsWith("@newsletter")) return t("chat.unnamed_channel");
+  if (jid.endsWith("@broadcast")) return t("chat.broadcast_list");
+  return t("chat.unknown_contact");
+}
+
+/**
+ * A name for someone, falling back to their number with its country when no
+ * name is known. Only phone JIDs carry a number; a LID never reads as one and
+ * is never shown as its digits.
+ *
+ * A non-contact with a WhatsApp name reads as `number · ~Name`. `compact`
+ * drops the number for labels inside a conversation (senders, mentions),
+ * where the profile card is one click away; the tilde still marks a
+ * self-chosen name rather than a saved contact.
+ */
+export function displayName(name: string | null | undefined, jid: string, identity?: ContactIdentity, compact = false): string {
   if (identity) {
     if (identity.own && identity.push_name) return identity.push_name;
     if (identity.contact_saved !== false && identity.saved_name) return identity.saved_name;
     if (identity.contact_saved == null && identity.legacy_name) return identity.legacy_name;
     if (identity.number) {
       const number = phoneLabel(identity.number) ?? `+${identity.number}`;
-      return identity.contact_saved !== true && identity.push_name ? `${number} · ~${identity.push_name}` : number;
+      if (identity.contact_saved !== true && identity.push_name) return compact ? `~${identity.push_name}` : `${number} · ~${identity.push_name}`;
+      return number;
     }
     if (identity.username) return `@${identity.username.replace(/^@/, "")}`;
     if (identity.push_name) return identity.push_name;
-    if (identity.contact_saved != null) return jid.split("@")[0].split(":")[0];
+    // Confirmed absence: a stale passed name must not come back.
+    if (identity.contact_saved != null) return fallbackName(null, jid);
   }
+  return fallbackName(name, jid);
+}
+
+/**
+ * A mention drawn without contact data (the floating window): the message's
+ * own address list says whether the digits are a phone number; never the
+ * bare identifier.
+ */
+export function mentionLabel(user: string, jids?: readonly string[]): string {
+  const exact = jids?.map((jid) => jid.replace(/:\d+(?=@)/, "")).find((jid) => jid.split("@")[0] === user);
+  return exact ? displayName(null, exact) : t("chat.unknown_contact");
+}
+
+function fallbackName(name: string | null | undefined, jid: string): string {
   if (name && !isPlaceholder(name)) return name;
+  // No address at all (a chat whose last row has no sender): nothing to name.
+  if (!jid) return name ?? "";
   const user = jid.split("@")[0].split(":")[0];
-  const digits = jid.endsWith("@s.whatsapp.net") ? (name?.replace("+", "") ?? user) : name?.startsWith("+") ? name.slice(1) : null;
-  return (digits && phoneLabel(digits)) || name || user;
+  const phone = jid.endsWith("@s.whatsapp.net");
+  const digits = phone ? (name?.replace("+", "") ?? user) : name?.startsWith("+") ? name.slice(1) : null;
+  const label = digits && phoneLabel(digits);
+  if (label) return label;
+  // A masked number such as `+598∙∙∙∙∙27` is still a number to read.
+  if (name?.startsWith("+")) return name;
+  if (phone && /^\d+$/.test(user)) return `+${user}`;
+  return unnamedLabel(jid);
 }
 
 // Self-check, run with `node --experimental-strip-types src/lib/utils/phone.ts`.
@@ -88,8 +131,12 @@ if (argv?.[1]?.endsWith("phone.ts")) {
   assert(phoneLabel("77011234567") === `${flag("KZ")} +7 7011234567`, "Kazakhstan");
   assert(phoneLabel("12025550123") === "+1 2025550123", "NANP");
   assert(displayName("Joaquin", "598@s.whatsapp.net") === "Joaquin", "name wins");
-  assert(displayName(null, "138947158093828@lid") === "138947158093828", "LID untouched");
-  assert(displayName("138947158093828", "138947158093828@lid") === "138947158093828", "numeric LID name never implies a phone number");
+  assert(displayName(null, "138947158093828@lid") === "Unknown contact", "unknown LID never shows its digits");
+  assert(displayName("138947158093828", "138947158093828@lid") === "Unknown contact", "numeric LID name never implies a phone number");
+  assert(displayName(null, "120363429906000000@g.us") === "Unnamed group", "unnamed group never shows its id");
+  assert(displayName("120363429906000000", "120363429906000000@g.us") === "Unnamed group", "numeric group name is an id");
+  assert(displayName(null, "120363000000000000@newsletter") === "Unnamed channel", "unnamed channel");
+  assert(displayName(null, "1234567890@broadcast") === "Broadcast list", "unnamed broadcast list");
   assert(displayName(null, "59891954564:3@s.whatsapp.net") === `${flag("UY")} +598 91954564`, "device suffix");
   const identity: ContactIdentity = { contact_saved: false, saved_name: null, legacy_name: null, push_name: "Push", username: "username", number: "59891954564", own: false };
   assert(displayName("stale", "77@lid", identity) === `${flag("UY")} +598 91954564 · ~Push`, "noncontact number and push name");
@@ -97,7 +144,7 @@ if (argv?.[1]?.endsWith("phone.ts")) {
   assert(displayName("stale", "77@lid", { ...identity, contact_saved: null, legacy_name: "Legacy" }) === "Legacy", "unknown baseline preserves legacy fallback");
   assert(displayName("stale", "77@lid", { ...identity, saved_name: "Legacy", legacy_name: "Legacy" }).endsWith("· ~Push"), "confirmed removal ignores stale saved labels");
   assert(displayName(null, "77@lid", { ...identity, contact_saved: true }) === `${flag("UY")} +598 91954564`, "saved contact without a name does not claim an unsaved push label");
-  assert(displayName("stale saved", "77:3@lid", { ...identity, number: null, username: null, push_name: null }) === "77", "confirmed absence cannot reuse a stale passed name");
+  assert(displayName("stale saved", "77:3@lid", { ...identity, number: null, username: null, push_name: null }) === "Unknown contact", "confirmed absence cannot reuse a stale passed name");
   assert(displayName("stale", "77@lid", { ...identity, contact_saved: null, legacy_name: "12345" }) === "12345", "unknown legacy numeric names stay unchanged");
   assert(displayName("Push", "77@lid", { ...identity, number: null }) === "@username", "username-only contact never formats a LID as a phone");
   assert(displayName(null, "77@lid", { ...identity, own: true }) === "Push", "own push name");

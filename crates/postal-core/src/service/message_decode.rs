@@ -484,6 +484,7 @@ pub(super) async fn stored_message(
         link: link_preview(message),
         live_location,
         album,
+        mentioned_jids: context_of(message).map(|context| context.mentioned_jid.clone()).unwrap_or_default(),
         ..Default::default()
     })
 }

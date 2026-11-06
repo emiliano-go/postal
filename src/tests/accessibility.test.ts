@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { installLocaleProvider, loadCatalog } from "../lib/i18n/localizer.ts";
 
 const stateGlobal = globalThis as unknown as { $state?: (value: unknown) => unknown };
 const originalState = stateGlobal.$state;
@@ -173,6 +174,27 @@ test("media alt text names sender, kind and caption", () => {
   assert.match(alt, /video/);
   assert.match(alt, /at the beach/);
   assert.match(mediaAltText("", "gif", null), /GIF/);
+});
+
+test("announcements and media alt text follow the active locale", async () => {
+  reset();
+  const catalog = await loadCatalog("ar");
+  const restore = installLocaleProvider(() => ({ locale: "ar", catalog }));
+  const heard: string[] = [];
+  const stop = onAnnouncement((a) => heard.push(a.text));
+  try {
+    accessibility.announcements = "detailed";
+    announceMessage("", "", true, { mention: true });
+    announceTyping("Alice", true);
+    assert.equal(heard[0], `${catalog["a11y.mention_from"]}`.replace("{name}", `${catalog["a11y.unknown_chat"]}`).replace("{text}", `${catalog["state.new_message"]}`));
+    assert.match(heard[1], /^Alice /);
+    assert.doesNotMatch(heard.join(" "), /New message|Mention from|Unknown chat|is typing/);
+    assert.equal(mediaAltText("Alice", "audio", null), `أرسل Alice ${catalog["a11y.kind_audio"]}`);
+  } finally {
+    stop();
+    restore();
+    reset();
+  }
 });
 
 test("text scale defaults and preset stay within 100–200", () => {

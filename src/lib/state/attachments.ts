@@ -83,8 +83,10 @@ async function clipboardFile(): Promise<File | null> {
  * page-load handler does `webview.uri().unwrap()`, the URI is absent for such
  * a load, and the panic aborts the process. So anything file-like is
  * swallowed; only real image bytes are staged, and plain text stays native.
+ * With `stage` off (chats that take no attachments) nothing is staged, but the
+ * paste is still swallowed.
  */
-export async function onPaste(event: ClipboardEvent) {
+export async function onPaste(event: ClipboardEvent, stage = true) {
   const data = event.clipboardData;
   const item = data
     ? Array.from(data.items).find(
@@ -97,6 +99,8 @@ export async function onPaste(event: ClipboardEvent) {
     !item && !isUriList && !!data && Array.from(data.types).includes("text/plain");
   if (isPlainText) return;
   if (item || isUriList || data) event.preventDefault();
+  // Chats that cannot take attachments still need the navigation blocked.
+  if (!stage) return;
 
   const file = item?.getAsFile() ?? (await clipboardFile());
   if (file) void composer.stageFile(file);

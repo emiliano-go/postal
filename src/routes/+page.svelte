@@ -84,7 +84,7 @@
   import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
-  import { bare, captionOf, dayKey, dayLabel, formatTime, isUnavailable } from "$lib/utils/message";
+  import { bare, captionOf, dayKey, dayLabel, formatTime, isUnavailable, listStamp } from "$lib/utils/message";
   import { chats } from "$lib/state/chats.svelte";
   import { composer } from "$lib/state/composer.svelte";
   import { favorites } from "$lib/state/favorites.svelte";
@@ -1317,7 +1317,7 @@
     const ids = messages.pinnedIds, id = activePinnedId;
     if (!id || !ids.includes(id)) return null;
     const message = messages.messages.find((row) => row.id === id) ?? (pinnedPreview?.id === id ? pinnedPreview : null);
-    const content = message ? floatContent(message, (user) => members.mentionName(user)) : null;
+    const content = message ? floatContent(message, (user) => members.mentionName(user, message.mentioned_jids)) : null;
     return {
       id,
       author: message ? (message.from_me ? t("chat.you") : members.senderLabel(message)) : "",
@@ -1439,7 +1439,7 @@
       path: m.media_path!,
       thumb: m.media_thumb,
       kind: m.media_kind!,
-      caption: plain(captionOf(m), (user) => members.mentionName(user)),
+      caption: plain(captionOf(m), (user) => members.mentionName(user, m.mentioned_jids)),
       get author() { return m.from_me ? t("chat.you") : members.senderLabel(m); },
       avatar: who ? (chats.avatars[who] ?? null) : null,
       timestamp: m.timestamp,
@@ -1586,17 +1586,19 @@
       const target = event.target as HTMLElement | null;
       if (
         target &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)
       ) {
         return;
       }
+      // Keys inside an open dialog belong to it, not the composer behind it.
+      const inDialog = !!target?.closest?.("dialog, [role=dialog], [role=alertdialog]");
       // Staged attachments go out on Enter even when focus left the composer.
       if (
         event.key === "Enter" &&
         !event.shiftKey &&
         composer.pending.length > 0 &&
         target?.tagName !== "BUTTON" &&
-        !target?.closest?.("[role=dialog]")
+        !inDialog
       ) {
         event.preventDefault();
         void composer.send();
@@ -1605,7 +1607,7 @@
       if (event.key.length !== 1) return;
       // WCAG 2.1.4: single-character shortcuts can be disabled from
       // Settings → Accessibility → Keyboard.
-      if (!accessibility.charShortcutsEnabled) return;
+      if (!accessibility.charShortcutsEnabled || inDialog) return;
       composerInput.focus();
     };
     window.addEventListener("keydown", onAnyKey);
@@ -1719,7 +1721,7 @@
 
 <!-- Window-level so a paste/drop anywhere cannot navigate the webview. -->
 <svelte:window
-  onpaste={(event) => { if (!isBroadcastList(chats.selectedChat) && !chats.selectedChat?.endsWith("@newsletter")) onPaste(event); }}
+  onpaste={(event) => onPaste(event, !isBroadcastList(chats.selectedChat) && !chats.selectedChat?.endsWith("@newsletter"))}
   onclick={(e) => {
     if (ui.accountMenu && !(e.target as Element).closest?.(".user-panel")) ui.accountMenu = false;
   }}
@@ -1803,7 +1805,7 @@
       avatars={chats.avatars}
       chatLabelOf={(chat) => chats.chatLabel(chat)}
       draftFor={(account, chat) => composer.draftFor(account, chat)}
-      {formatTime}
+      formatTime={listStamp}
       typingLabelOf={(chat) => members.typingLabel(chat)}
       previewAuthorOf={(chat) => chats.previewAuthor(chat)}
       previewTextOf={(chat) => chats.previewText(chat)}
@@ -1888,7 +1890,7 @@
           messageLabels={labels.account === session.activeAccount ? labels.view.messages : []}
           labelsWritable={session.connected && labels.loaded && !labels.busy} labelsLoading={labels.loading} labelsError={labels.error ?? ""} labelsComplete={labels.view.complete}
           chatLabelOf={(chat) => chats.chatLabel(chat)} avatarOf={(jid) => chats.avatars[jid] ?? null}
-          previewTextOf={(chat) => chats.previewText(chat)} {formatTime}
+          previewTextOf={(chat) => chats.previewText(chat)} formatTime={listStamp}
           syncPending={session.syncPending} syncApplied={session.syncApplied} historyPercent={session.historyPercent}
           backfill={session.backfill} finalizing={session.finalizing}
           onopen={(chat, mention) => { ui.showInbox = false; void openChat(chat, mention); }}
@@ -2007,7 +2009,7 @@
           }}
           onscroll={onScroll}
           toWire={(text) => members.asWireMentions(text)}
-          targetOf={(user) => members.mentionTarget(user)}
+          targetOf={(user, jids) => members.mentionTarget(user, jids)}
           onprofile={openProfile}
           onopenurl={openUrl}
           onopenchat={openChat}

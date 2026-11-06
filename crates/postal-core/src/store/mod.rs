@@ -117,6 +117,12 @@ pub struct StoredMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "wire-types", ts(optional))]
     pub album: Option<Album>,
+    /// The full addresses a message mentions (`mentioned_jid`), in wire order.
+    /// The text only carries `@<digits>`, which alone cannot tell a LID from a
+    /// phone number. Empty for rows stored before it was kept.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "wire-types", ts(as = "Option<Vec<String>>", optional))]
+    pub mentioned_jids: Vec<String>,
 }
 
 /// A live location share as last seen: the position, its accuracy and the
@@ -327,7 +333,7 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
   m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable, m.spoiler,
-  m.mentioned_all_only, m.album";
+  m.mentioned_all_only, m.album, m.mentioned_jids";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -390,6 +396,10 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             .get::<_, Option<String>>(37)?
             .and_then(|json| serde_json::from_str(&json).ok()),
         album: row.get::<_, Option<String>>(41)?.and_then(|json| serde_json::from_str(&json).ok()),
+        mentioned_jids: row
+            .get::<_, Option<String>>(42)?
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
     })
 }
 

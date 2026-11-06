@@ -89,6 +89,7 @@ impl WhatsAppService {
 
         let mut message = self.own_message(chat, &result.message_id, text, "", to_self);
         message.history_shareable = group_history::is_shareable_text(&result.message);
+        message.mentioned_jids = mentioned;
         if let Some(p) = &preview {
             message.link = LinkCard {
                 url: Some(p.url.clone()),
@@ -645,6 +646,7 @@ impl WhatsAppService {
         let result = self.client.send_message(to, message).await?;
 
         let mut stored = self.own_message(chat, &result.message_id, text, "", to_self);
+        stored.mentioned_jids = mentioned;
         stored.quote = self.local_quote(&quoted_chat.to_string(), reply_to_id, reply_to_sender, sender.to_string() == self.own_jid()).await;
         stored.quote.chat = quote_chat.map(str::to_string);
         let stored = self.store.insert_message_row(&stored).await?;

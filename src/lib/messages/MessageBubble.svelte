@@ -42,6 +42,12 @@
   const altText = $derived(
     mediaAltText(vm.senderText || (message.from_me ? t("chat.you") : message.sender), message.media_kind ?? "image", vm.caption || message.text),
   );
+  const tickLabel = $derived(
+    message.status === "read" ? t("content.read")
+      : message.status === "delivered" ? t("content.delivered")
+        : message.status === "sent" ? t("content.sent")
+          : t("content.pending"),
+  );
   function kindOfFile(path: string) {
     if (/\.(ogg|opus|mp3|m4a|aac|wav)$/i.test(path)) return "audio";
     if (/\.(mp4|mov|m4v|webm|mkv)$/i.test(path)) return "video";
@@ -60,14 +66,8 @@
       class:read={message.status === "read"}
       class:delivered={message.status === "delivered"}
       role="img"
-      aria-label={message.status === "read"
-        ? t("content.read")
-        : message.status === "delivered"
-          ? t("content.delivered")
-          : message.status === "sent"
-            ? t("content.sent")
-            : t("content.pending")}
-      title={message.status ?? t("content.pending")}>
+      aria-label={tickLabel}
+      title={tickLabel}>
       {#if message.status === "pending"}
         <Icon name="clock" size={14} />
       {:else if message.status === "sent"}
@@ -213,9 +213,11 @@
       <!-- Fetched on its own when shown; the placeholder keeps the sticker's space. -->
       <button
         class="sticker sticker-pending"
+        class:downloading={vm.downloading}
         title={vm.downloading ? t("content.loading_sticker") : t("content.load_sticker")}
+        aria-label={vm.downloading ? t("content.loading_sticker") : t("content.load_sticker")}
         onclick={() => api.ondownload(message)}>
-        {#if vm.downloading}<Spinner />{:else}<Icon name="sticker" size={28} />{/if}
+        {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={24} />{/if}
       </button>
     {:else if message.media_kind === "image" && (message.media_path || message.media_thumb)}
       {@const filtered = vm.onceKept && !vm.onceRevealed}
@@ -377,7 +379,7 @@
         mine={message.from_me}
         meta={vm.inlineMeta ? metadata : undefined}
         toWire={api.toWire}
-        targetOf={api.targetOf}
+        targetOf={(user) => api.targetOf(user, message.mentioned_jids)}
         avatarOf={api.avatarOf}
         onprofile={api.onprofile}
         onopenurl={api.onopenurl} />
@@ -412,7 +414,7 @@
         mine={message.from_me}
         meta={vm.inlineMeta ? metadata : undefined}
         toWire={api.toWire}
-        targetOf={api.targetOf}
+        targetOf={(user) => api.targetOf(user, message.mentioned_jids)}
         avatarOf={api.avatarOf}
         onprofile={api.onprofile}
         onopenurl={api.onopenurl} />
@@ -421,7 +423,7 @@
     {#if message.media_kind === "document" && !message.media_path && !vm.viewOnce}
       <button class="download" onclick={() => api.ondownload(message)}>
         <Icon name="download" size={14} />
-        {t("content.download")} {message.media_kind}
+        {t("content.download_document")}
       </button>
     {/if}
 
@@ -978,6 +980,15 @@
     border-radius: 18px;
     color: var(--faint);
     cursor: pointer;
+    background: var(--surface);
+  }
+  .sticker-pending:not(.downloading):hover {
+    background: var(--raised);
+    color: var(--text);
+  }
+  /* The shimmer means "on its way", so only a download in progress gets it. */
+  .sticker-pending.downloading {
+    cursor: progress;
     background: linear-gradient(100deg, var(--surface) 40%, var(--raised) 50%, var(--surface) 60%) 0 0 / 300% 100%;
     animation: shimmer 1.4s linear infinite;
   }

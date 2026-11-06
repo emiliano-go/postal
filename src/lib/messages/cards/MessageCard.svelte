@@ -105,7 +105,7 @@
       mine={message.from_me}
       meta={vm.inlineMeta ? meta : undefined}
       toWire={api.toWire}
-      targetOf={api.targetOf}
+      targetOf={(user) => api.targetOf(user, message.mentioned_jids)}
       avatarOf={api.avatarOf}
       onprofile={api.onprofile}
       onopenurl={api.onopenurl} />

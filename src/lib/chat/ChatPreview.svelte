@@ -15,6 +15,7 @@
   import { cursorOf } from "$lib/utils/message-window";
   import { dayKey, dayLabel, formatTime } from "$lib/utils/message";
   import { displayName } from "$lib/utils/phone";
+  import { members } from "$lib/state/members.svelte";
   import { hue } from "$lib/utils/avatar";
   import { player } from "$lib/state/player.svelte";
   import { ui } from "$lib/state/ui.svelte";
@@ -114,7 +115,7 @@
   const viewerIndex = $derived(viewerId ? viewable.findIndex((message) => message.id === viewerId) : -1);
 
   function viewerItem(message: StoredMessage): ViewerItem {
-    const content = previewContent(message);
+    const content = previewContent(message, (user) => members.mentionName(user, message.mentioned_jids));
     return {
       id: message.id,
       path: message.media_path!,
@@ -223,7 +224,7 @@
         {#if olderError}<p class="status" role="alert">{t("chat.preview_older_failed", { error: normalizeError(olderError).message })}</p>{/if}
         <ol>
           {#each rows as message, index (message.id)}
-            {@const content = previewContent(message)}
+            {@const content = previewContent(message, (user) => members.mentionName(user, message.mentioned_jids))}
             {#if index === 0 || dayKey(rows[index - 1].timestamp) !== dayKey(message.timestamp)}
               <li class="day">{dayLabel(message.timestamp)}</li>
             {/if}

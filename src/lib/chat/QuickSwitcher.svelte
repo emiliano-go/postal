@@ -35,6 +35,11 @@
   let catalogError = $state<LocalizedError | string | null>(null);
   let error = $state<LocalizedError | string | null>(null);
 
+  const KIND_LABELS = { channel: "channels.channel", group: "group.group", contact: "contact.contact", message: "chat.message" } as const;
+  function kindLabel(kind: string) {
+    return t(KIND_LABELS[kind as keyof typeof KIND_LABELS] ?? "chat.chat");
+  }
+
   const recent = $derived.by((): QuickChat[] => [...chats].sort((a, b) => b.last_message_at - a.last_message_at).slice(0, QUICK_RECENT_LIMIT).map((chat) => ({
     jid: chat.chat, name: chat.display_name ?? chat.chat.split("@")[0], number: chat.chat.split("@")[0],
     kind: chat.chat.endsWith("@newsletter") ? "channel" : chat.chat.endsWith("@g.us") ? "group" : "chat",
@@ -49,7 +54,7 @@
       const label = chats.find((chat) => chat.chat === message.chat)?.display_name ?? message.chat.split("@")[0];
       return { key: JSON.stringify([message.chat, message.id]), chat: message.chat, messageId: message.id,
         label, title: members.displayName(label, message.chat), kind: "message",
-        snippet: message.spoiler ? t("chat.spoiler") : messageSnippet(plain(message.text, (user) => members.mentionName(user)), query),
+        snippet: message.spoiler ? t("chat.spoiler") : messageSnippet(plain(message.text, (user) => members.mentionName(user, message.mentioned_jids)), query),
       };
     }),
   ] : []);
@@ -123,7 +128,7 @@
     <h2 id="quick-switcher-title">{t("nav.quick_switcher")}</h2>
     <button type="button" class="close" aria-label={t("nav.quick_close")} onclick={close}>×</button>
   </header>
-  <input bind:this={input} bind:value={query} role="combobox" aria-label={t("nav.quick_find")}
+  <input bind:this={input} dir="auto" bind:value={query} role="combobox" aria-label={t("nav.quick_find")}
     aria-autocomplete="list" aria-expanded="true" aria-controls="quick-switcher-results"
     aria-activedescendant={rows[selected] ? `quick-switcher-option-${selected}` : undefined}
     placeholder={t("nav.quick_hint")} disabled={busy} />
@@ -134,7 +139,7 @@
         <button id={`quick-switcher-option-${index}`} type="button" role="option" tabindex="-1"
           aria-selected={selected === index} class:active={selected === index} disabled={busy}
           onmouseenter={() => (selected = index)} onclick={() => void choose(row)}>
-          <span class="label"><bdi>{row.title}</bdi></span><span class="kind">{row.kind}</span>
+          <span class="label"><bdi>{row.title}</bdi></span><span class="kind">{kindLabel(row.kind)}</span>
           {#if row.snippet}<span class="snippet">{row.snippet}</span>{/if}
         </button>
       </li>

@@ -45,7 +45,7 @@
   <form onsubmit={(event) => { event.preventDefault(); void save(); }}>
     <h2>{editing ? t("content.edit_scheduled_message") : t("content.schedule_message")}</h2>
     <p>{t("content.postal_sends_when_this_account_is_connected_and_the_app_is_open_missed_t")}</p>
-    <label>{t("content.message")}<textarea bind:value={body} readonly={!editing} rows="3" required></textarea></label>
+    <label>{t("content.message")}<textarea dir="auto" bind:value={body} readonly={!editing} rows="3" required></textarea></label>
     <label>{t("content.send_at_in_your_local_time")}<input type="datetime-local" bind:value={time} required /></label>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">

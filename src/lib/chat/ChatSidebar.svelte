@@ -215,6 +215,7 @@
 
   /** Right-click menu on a chat row. */
   let chatMenu = $state<{ x: number; y: number; chat: ChatSummary } | null>(null);
+  let meButton = $state<HTMLButtonElement>();
   let menuAutoDownload = $state<MediaAutoDownloadOverrides>(emptyMediaOverrides());
   const menuDownloadsEnabled = $derived(MEDIA_TYPES.some(([kind]) => menuAutoDownload[kind] ?? globalAutoDownload[kind]));
   let menuLoaded = $state(false);
@@ -540,15 +541,23 @@
     <Icon name="search" size={15} />
     <input
       dir="auto" placeholder={t("nav.search_chats_contacts")}
+      aria-label={t("nav.search_chats_contacts")}
       bind:value={searchQuery}
       oninput={onsearch}
+      onkeydown={(event) => {
+        if (event.key !== "Escape" || !searchQuery) return;
+        event.preventDefault();
+        event.stopPropagation();
+        searchQuery = "";
+        onsearch();
+      }}
       autocomplete="off"
     />
   </label>
   {#if !searchQuery.trim()}
     <div class="filters actions-row">
-      <Button variant="chip" onclick={oninbox}>{t("chat.inbox")}</Button>
-      <Button variant="chip" onclick={onlabels}>{t("labels.manage")}</Button>
+      <Button variant="chip" tab={false} onclick={oninbox}>{t("chat.inbox")}</Button>
+      <Button variant="chip" tab={false} onclick={onlabels}>{t("labels.manage")}</Button>
     </div>
     <div class="mini-divider" aria-hidden="true"></div>
     <div class="filters labels-row" role="tablist" aria-label={t("nav.filter_chats")}>
@@ -630,7 +639,7 @@
               {members.displayName(result.name, result.jid)}
             </span>
             <span class="preview">
-              {result.kind}{result.has_messages ? "" : t("chat.no_messages_suffix")}
+              {t(result.kind === "group" ? "group.group" : "contact.contact")}{result.has_messages ? "" : t("chat.no_messages_suffix")}
             </span>
           </div>
         </li>
@@ -711,6 +720,7 @@
               <button
                 class="badge mention-badge"
                 title={t("chat.jump_mention")}
+                aria-label={t("chat.jump_mention")}
                 onclick={(e) => {
                   e.stopPropagation();
                   releaseFreeze();
@@ -718,7 +728,7 @@
                 }}>@</button>
             {/if}
             {#if isMuted(chat)}
-              <span class="muted-mark" title={t("chat.muted")}><Icon name="volume" size={13} /></span>
+              <span class="muted-mark" title={t("chat.muted")}><Icon name="volumeX" size={13} /></span>
             {/if}
             {#if chat.mute_at_all}
               <span class="muted-mark at-muted" title={t("chat.all_muted")}><Icon name="at" size={13} /></span>
@@ -744,12 +754,16 @@
   </div>
     {#if virtualRows.length === 0}
       <div class="empty">
-        {chatFilter === "unread"
+        {labelFilter
+          ? t("nav.label_empty")
+          : chatFilter === "unread"
           ? t("nav.unread_empty")
           : chatFilter === "archived"
             ? t("nav.archived_empty")
           : chatFilter === "groups"
             ? t("nav.groups_empty")
+          : chatFilter === "favorites"
+            ? t("nav.favorites_empty")
             : t("nav.chats_empty")}
       </div>
     {/if}
@@ -789,8 +803,10 @@
       </div>
     {/if}
     <button
+      bind:this={meButton}
       class="me"
       title={t("settings.account_switch")}
+      aria-haspopup="menu"
       aria-expanded={accountMenu}
       onclick={onmenutoggle}>
       <span class="me-avatar-wrap">
@@ -981,7 +997,7 @@
         onmouseleave={scheduleMuteClose}
         onfocus={openMuteMenu}
         onblur={scheduleMuteClose}>
-        <Icon name="volume" size={15} />
+        <Icon name="volumeX" size={15} />
         <span>{t("chat.mute")}</span>
         <Icon name={locale.dir === "rtl" ? "chevronLeft" : "chevronRight"} size={15} />
       </div>
@@ -1100,6 +1116,11 @@
   onkeydown={(e) => {
     if (e.key === "Escape" && preview && !e.defaultPrevented) dismissPreview();
     if (e.key === "Escape" && chatMenu) closeChatMenu();
+    if (e.key === "Escape" && accountMenu) {
+      onmenutoggle();
+      // Focus was in the menu; hand it back to the button that opened it.
+      if ((e.target as Element | null)?.closest?.(".account-menu")) meButton?.focus();
+    }
   }}
   onblur={hidePreview} />
 
@@ -1115,30 +1136,31 @@
     flex-direction: column;
     min-height: 0;
   }
+  /* Six fixed-size buttons do not fit beside the title at every list width
+     (the list can be 180px): the buttons wrap to a second row instead of
+     being clipped. */
   .chats header {
     min-width: 0;
-    height: 64px;
+    min-height: 64px;
     box-sizing: border-box;
     flex: none;
-    overflow: hidden;
-    padding: 0 12px 0 16px;
+    padding: 6px 8px 6px 16px;
     display: flex;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
-    gap: 8px;
+    gap: 4px 0;
   }
   .title {
+    flex: 1 0 auto;
     margin: 0;
+    margin-inline-end: 8px;
     font-size: 1.375rem;
     font-weight: 700;
   }
   /* Shared button shapes live in $lib/ui/Button.svelte; only spot tweaks stay here. */
   :global(.badge-host) {
     position: relative;
-  }
-  /* Keeps the mentions button beside the starred one instead of centred. */
-  .chats header :global(.badge-host) {
-    margin-inline-start: auto;
   }
   .icon-badge {
     position: absolute;
